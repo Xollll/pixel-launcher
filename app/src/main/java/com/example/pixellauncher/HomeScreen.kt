@@ -7,8 +7,24 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Easing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -34,12 +50,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -75,11 +95,13 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.floor
 
 private val TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
 private val DATE_FMT = DateTimeFormatter.ofPattern("EEE dd MMM yyyy", Locale.ENGLISH)
 private val Mint = Color(0xFF6FE39A)
 private val Yellow = Color(0xFFF2D94E)
+private val PixelSteps = Easing { floor(it * 6f) / 6f }
 
 private fun readBatteryPercent(context: Context): Int {
     val manager = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
@@ -170,6 +192,7 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
                 )
             },
     ) {
+        PixelDust(Modifier.fillMaxSize())
         Column(
             Modifier.fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
@@ -206,7 +229,11 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
         )
 
         // Keep the working Milestone 1 app list and search while the home layout is rebuilt.
-        if (menuOpen) {
+        AnimatedVisibility(
+            visible = menuOpen,
+            enter = fadeIn(tween(160)) + scaleIn(initialScale = 0.88f, animationSpec = tween(280, easing = PixelSteps)),
+            exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.96f, animationSpec = tween(140, easing = PixelSteps)),
+        ) {
             AppMenu(
                 apps = apps,
                 query = query,
@@ -265,14 +292,14 @@ private fun LeftDashboard(now: LocalDateTime, modifier: Modifier = Modifier) {
         Row(Modifier.fillMaxWidth().height(112.dp), verticalAlignment = Alignment.CenterVertically) {
             PixelMascot(Modifier.width(108.dp).fillMaxHeight())
             Spacer(Modifier.width(10.dp))
-            WindowPanel(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            WindowPanel(modifier = Modifier.weight(1f).fillMaxHeight(), entranceDelayMs = 100) {
                 PxText("> hello, player one_", 24.sp, Px.cream, maxLines = 2)
                 Spacer(Modifier.height(4.dp))
                 PxText("3 tasks today", 20.sp, Px.dim)
             }
         }
         Spacer(Modifier.height(12.dp))
-        WindowPanel(title = "TODO.md", modifier = Modifier.fillMaxWidth().weight(1f)) {
+        WindowPanel(title = "TODO.md", modifier = Modifier.fillMaxWidth().weight(1f), entranceDelayMs = 250) {
             TodoRow("x", "Build")
             TodoRow(" ", "Test")
             TodoRow(" ", "Refactor")
@@ -289,7 +316,18 @@ private fun TodoRow(mark: String, label: String) {
 
 @Composable
 private fun PixelMascot(modifier: Modifier = Modifier) {
-    Canvas(modifier) {
+    val motion = rememberInfiniteTransition(label = "mascot bob")
+    val bob by motion.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Reverse),
+        label = "mascot bob",
+    )
+    val blink by motion.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(4000, easing = LinearEasing)),
+        label = "mascot blink",
+    )
+    Canvas(modifier.graphicsLayer { translationY = -bob * 8.dp.toPx() }) {
         val cellWidth = size.width / 14f
         val cellHeight = size.height / 12f
         fun pixel(x: Int, y: Int, color: Color) {
@@ -309,8 +347,40 @@ private fun PixelMascot(modifier: Modifier = Modifier) {
             for (x in 10..11) pixel(x, y, Px.coralDark)
         }
         // Dark pixel eyes form inward pointing chevrons.
-        pixel(4, 3, Px.bg); pixel(5, 4, Px.bg); pixel(4, 5, Px.bg)
-        pixel(9, 3, Px.bg); pixel(8, 4, Px.bg); pixel(9, 5, Px.bg)
+        if (blink in 0.93f..0.97f) {
+            pixel(4, 4, Px.bg); pixel(9, 4, Px.bg)
+        } else {
+            pixel(4, 3, Px.bg); pixel(5, 4, Px.bg); pixel(4, 5, Px.bg)
+            pixel(9, 3, Px.bg); pixel(8, 4, Px.bg); pixel(9, 5, Px.bg)
+        }
+    }
+}
+
+@Composable
+private fun PixelDust(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "pixel dust")
+    val twinkle by transition.animateFloat(
+        0.15f, 0.85f,
+        infiniteRepeatable(tween(1750, easing = LinearEasing), RepeatMode.Reverse),
+        label = "dust twinkle",
+    )
+    val particles = remember {
+        listOf(
+            Triple(.11f, .18f, 5f), Triple(.29f, .71f, 4f), Triple(.42f, .31f, 6f),
+            Triple(.56f, .82f, 4f), Triple(.68f, .17f, 5f), Triple(.79f, .48f, 4f),
+            Triple(.91f, .28f, 5f), Triple(.18f, .53f, 4f), Triple(.63f, .66f, 6f),
+            Triple(.36f, .12f, 4f), Triple(.86f, .78f, 4f), Triple(.49f, .48f, 5f),
+        )
+    }
+    Canvas(modifier) {
+        particles.forEachIndexed { index, (x, y, pixelSize) ->
+            val phase = if (index % 2 == 0) twinkle else 1f - twinkle
+            drawRect(
+                Px.coral.copy(alpha = phase),
+                Offset(this.size.width * x, this.size.height * y),
+                Size(pixelSize.dp.toPx(), pixelSize.dp.toPx()),
+            )
+        }
     }
 }
 
@@ -325,7 +395,7 @@ private fun RightDashboard(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        WindowPanel(title = "TODAY", modifier = Modifier.weight(1.05f)) {
+        WindowPanel(title = "TODAY", modifier = Modifier.weight(1.05f), entranceDelayMs = 180) {
             AgendaRow("09:00", "Standup")
             AgendaRow("12:30", "Lunch")
             AgendaRow("15:00", "Review")
@@ -333,7 +403,7 @@ private fun RightDashboard(
         }
 
         Row(Modifier.fillMaxWidth().weight(1.45f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            WindowPanel(title = "NOW.PLAYING", modifier = Modifier.weight(1f)) {
+            WindowPanel(title = "NOW.PLAYING", modifier = Modifier.weight(1f), entranceDelayMs = 330) {
                 if (notificationAllowed) {
                     Equalizer()
                     PxText(track?.title ?: "NOTHING PLAYING", 22.sp, Px.cream, maxLines = 1)
@@ -345,7 +415,7 @@ private fun RightDashboard(
                     SettingsActionButton("ENABLE MUSIC ACCESS", onEnableNotifications)
                 }
             }
-            WindowPanel(title = "SYS.MONITOR", modifier = Modifier.weight(1f)) {
+            WindowPanel(title = "SYS.MONITOR", modifier = Modifier.weight(1f), entranceDelayMs = 480) {
                 if (usageAllowed) {
                     PxText("APP USAGE ACCESS: ON", 17.sp, Mint)
                     MonitorRow("CPU", 38, Px.coral)
@@ -359,7 +429,7 @@ private fun RightDashboard(
             }
         }
 
-        WindowPanel(title = "QUICK.TOGGLE", modifier = Modifier.height(92.dp)) {
+        WindowPanel(title = "QUICK.TOGGLE", modifier = Modifier.height(92.dp), entranceDelayMs = 630) {
             Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 PanelButton(ctx, "WI-FI", Settings.Panel.ACTION_WIFI, true, Modifier.weight(1f))
                 PanelButton(ctx, "BT", Settings.ACTION_BLUETOOTH_SETTINGS, true, Modifier.weight(1f))
@@ -387,9 +457,15 @@ private fun Equalizer() {
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
-        heights.forEach { height ->
+        heights.forEachIndexed { index, height ->
+            val transition = rememberInfiniteTransition(label = "equalizer $index")
+            val level by transition.animateFloat(
+                0.2f, 1f,
+                infiniteRepeatable(tween(900, delayMillis = index * 55, easing = LinearEasing), RepeatMode.Reverse),
+                label = "equalizer bar $index",
+            )
             Box(
-                Modifier.weight(1f).fillMaxHeight(height).background(Px.coral),
+                Modifier.weight(1f).fillMaxHeight(height * level).background(Px.coral),
             )
         }
     }
@@ -408,8 +484,14 @@ private fun MonitorRow(label: String, percent: Int, color: Color) {
 private fun SegmentedBar(percent: Int, color: Color, modifier: Modifier = Modifier) {
     val count = 16
     val filled = (count * percent.coerceIn(0, 100) / 100f).toInt()
+    val pulse = rememberInfiniteTransition(label = "segmented bar pulse")
+    val alpha by pulse.animateFloat(
+        1f, 0.6f,
+        infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Reverse),
+        label = "bar pulse",
+    )
     Box(modifier.height(9.dp).background(Color(0xFF1C1411))) {
-        Row(Modifier.fillMaxWidth(percent.coerceIn(0, 100) / 100f).fillMaxHeight()) {
+        Row(Modifier.fillMaxWidth(percent.coerceIn(0, 100) / 100f).fillMaxHeight().graphicsLayer { this.alpha = alpha }) {
             repeat(count) { index ->
                 Box(
                     Modifier.weight(1f).fillMaxHeight().padding(end = 2.dp)
@@ -452,10 +534,25 @@ private fun PanelButton(ctx: Context, label: String, action: String, active: Boo
 private fun WindowPanel(
     title: String? = null,
     modifier: Modifier = Modifier,
+    entranceDelayMs: Int = 0,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val floatTransition = rememberInfiniteTransition(label = "window float")
+    val float by floatTransition.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(3000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "window float",
+    )
+    val opacity = remember { Animatable(0f) }
+    LaunchedEffect(entranceDelayMs) {
+        delay(entranceDelayMs.toLong())
+        opacity.animateTo(1f, tween(800, easing = FastOutSlowInEasing))
+    }
     Column(
-        modifier.drawBehind {
+        modifier.graphicsLayer {
+            translationY = -float * 6.dp.toPx()
+            alpha = opacity.value
+        }.drawBehind {
             val shadow = 4.dp.toPx()
             val border = 1.5.dp.toPx()
             drawRect(Color.Black, Offset(shadow, shadow), Size(size.width, size.height))
@@ -686,12 +783,22 @@ private fun BatteryGlyph(modifier: Modifier = Modifier) {
 
 @Composable
 private fun PixelMenuCircle(onClick: () -> Unit) {
+    val transition = rememberInfiniteTransition(label = "menu pulse")
+    val pulse by transition.animateFloat(
+        1f, 1.035f,
+        infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse),
+        label = "menu glow pulse",
+    )
     Column(
         Modifier.width(92.dp).clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Box(Modifier.size(92.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(92.dp).graphicsLayer { scaleX = pulse; scaleY = pulse }
+                .drawBehind { drawRect(Px.coral.copy(alpha = 0.18f * (pulse - 1f) / 0.035f), size = size) },
+            contentAlignment = Alignment.Center,
+        ) {
             Canvas(Modifier.fillMaxSize()) {
                 val rowWidths = intArrayOf(24, 40, 56, 64, 72, 72, 80, 80, 88, 88, 88, 88, 88, 88, 88, 80, 80, 72, 72, 64, 56, 40, 24)
                 rowWidths.forEachIndexed { row, width ->
@@ -851,8 +958,8 @@ fun AppMenu(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     contentPadding = PaddingValues(4.dp),
                 ) {
-                    items(shown, key = { it.pkg + "/" + it.activity }) { app ->
-                        AppTile(app, selected = shown.firstOrNull() == app) { onLaunch(app) }
+                    itemsIndexed(shown, key = { _, app -> app.pkg + "/" + app.activity }) { index, app ->
+                        AppTile(app, entranceDelayMs = 35 + index * 12) { onLaunch(app) }
                     }
                 }
             }
@@ -861,21 +968,38 @@ fun AppMenu(
 }
 
 @Composable
-fun AppTile(app: AppInfo, selected: Boolean = false, onClick: () -> Unit) {
+fun AppTile(app: AppInfo, entranceDelayMs: Int = 0, onClick: () -> Unit) {
+    val opacity = remember(app.pkg) { Animatable(0f) }
+    val interaction = remember(app.pkg) { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val focused by interaction.collectIsFocusedAsState()
+    val pressed by interaction.collectIsPressedAsState()
+    val highlighted = hovered || focused || pressed
+    LaunchedEffect(app.pkg, entranceDelayMs) {
+        opacity.snapTo(0f)
+        delay(entranceDelayMs.toLong())
+        opacity.animateTo(1f, tween(180, easing = FastOutSlowInEasing))
+    }
     Column(
         Modifier.fillMaxWidth().height(124.dp)
+            .graphicsLayer {
+                alpha = opacity.value
+                if (highlighted) translationX = -2.dp.toPx()
+            }
             .pixelBox(
                 fill = Color(0xFF120D0B),
-                border = if (selected) Px.coral else Px.line,
-                shadow = 4.dp,
-                shadowColor = if (selected) Px.coralDark else Color.Black,
+                border = if (highlighted) Px.coral else Px.line,
+                shadow = if (highlighted) 6.dp else 4.dp,
+                shadowColor = if (highlighted) Px.coralDark else Color.Black,
             )
-            .clickable(onClick = onClick)
+            .hoverable(interactionSource = interaction)
+            .focusable(interactionSource = interaction)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceEvenly,
     ) {
         Image(app.icon, contentDescription = app.label, modifier = Modifier.size(44.dp))
-        PxText(app.label.uppercase(Locale.ENGLISH), 22.sp, if (selected) Px.coral else Px.cream, maxLines = 1, align = TextAlign.Center)
+        PxText(app.label.uppercase(Locale.ENGLISH), 22.sp, if (highlighted) Px.coral else Px.cream, maxLines = 1, align = TextAlign.Center)
     }
 }
