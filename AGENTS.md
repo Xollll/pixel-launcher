@@ -4,11 +4,21 @@ Instructions for any AI coding agent working in this repo.
 
 A custom Android launcher for a **Samsung Galaxy Tab S7 FE** (2560x1600, landscape, Android 11+). Native Kotlin + Jetpack Compose. Gaming / pixel-terminal style with light animation.
 
-Design reference (live mockup, open in a browser): https://claude.ai/artifact/GXZSzc7QdALL2zUJxYcD1y
-Boards "B3 Home" and "B4 Menu popup open" are the targets for Milestones 1 and 2. Match them closely.
+Design reference: the HTML files in the `design/` folder (`Home.html`, `Home-menu-open.html`, `Lock.html`, `Lock-passcode-open.html`). Read them for exact colors, sizes, spacing and animation timings. `Home.html` and `Home-menu-open.html` are the targets for Milestones 1 and 2. Match them closely, but scale sizes to the real screen: the mockups use a 1600x1000 canvas, so do not copy pixel values directly.
+Build the static layout first. Add animations as a separate later step, using the CSS keyframes in those files as the reference.
+
+## Design files (in `design/`)
+Open these and read the HTML/CSS for exact colors, sizes, spacing and animation timings.
+
+| File | Screen | Use it for |
+|---|---|---|
+| `Home.html` | Home dashboard with the right-edge rail and MENU circle | **Milestone 2 target.** Rebuild the Home screen to match it. |
+| `Home-menu-open.html` | App menu popup, open | **Milestone 2.** Restyle the existing Milestone 1 popup to match it (keep the working app list and search). |
+| `Lock.html` | Lock screen | **Not now.** Reference for a later lock-wallpaper / optional in-app lock. Do not build it in Milestone 2. |
+| `Lock-passcode-open.html` | Lock screen with passcode pad | **Not now.** Same as above. |
 
 ## Current state
-Milestone 1 is already in the repo and builds: working launcher, live clock, MENU button, app menu popup with search (files in `app/src/main/java/com/example/pixellauncher/`: MainActivity.kt, Apps.kt, Theme.kt, HomeScreen.kt). Do NOT recreate the project. Extend it. Next task: Milestone 2.
+Milestone 1 is already in the repo and builds: working launcher, live clock, MENU button, app menu popup with search (files in `app/src/main/java/com/example/pixellauncher/`: MainActivity.kt, Apps.kt, Theme.kt, HomeScreen.kt). Do NOT recreate the project. Extend it. Next task: Milestone 2 (layout only, no animations yet).
 
 ## Stack and setup
 - Kotlin, Jetpack Compose (Material3 only where useful; custom drawing preferred), Gradle Kotlin DSL.
