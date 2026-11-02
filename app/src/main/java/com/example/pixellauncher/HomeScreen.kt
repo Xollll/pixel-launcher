@@ -220,7 +220,7 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
         Column(
             Modifier.fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(start = 48.dp, top = 48.dp, bottom = 48.dp, end = 200.dp)
+                .padding(start = 48.dp, top = 48.dp, bottom = 48.dp, end = 168.dp)
                 .blur(if (menuOpen || editingApp != null) 8.dp else 0.dp),
         ) {
             TopBar(batteryPercent, deviceName)
@@ -488,7 +488,7 @@ private fun RightDashboard(
                     )
                 } else {
                     PxText("SPOTIFY CONTROLS", 21.sp, Px.cream, maxLines = 1)
-                    PxText("Tap card to open Spotify.", 19.sp, Px.dim, maxLines = 2)
+                    PxText("Media controls and public lock-screen previews use notification access.", 19.sp, Px.dim, maxLines = 2)
                     SettingsActionButton("ENABLE MEDIA ACCESS", onEnableNotifications)
                 }
             }
@@ -779,7 +779,7 @@ private fun EdgeShortcutRail(
         ) {
             Column(
                 Modifier.fillMaxHeight().width(112.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 rings.forEach { ring ->
@@ -839,7 +839,7 @@ private fun RailShortcutButton(ring: RingItem, onClick: () -> Unit, onLongClick:
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(70.dp), contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
                 val stroke = 7.dp.toPx()
                 val radius = (size.minDimension - stroke) / 2f
@@ -860,7 +860,7 @@ private fun RailShortcutButton(ring: RingItem, onClick: () -> Unit, onLongClick:
                 BatteryGlyph(Modifier.size(30.dp))
             } else PxText("?", 26.sp, Px.cream, fontFamily = PixelFonts.display)
         }
-        PxText(if (!ring.usageAccess && !ring.battery) "--" else "${ring.percent}%", 22.sp, Px.cream, align = TextAlign.Center)
+        PxText(if (!ring.usageAccess && !ring.battery) "--" else "${ring.percent}%", 20.sp, Px.cream, align = TextAlign.Center)
     }
 }
 
@@ -1047,13 +1047,17 @@ fun AppMenu(
 
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(4),
-                    modifier = Modifier.height(400.dp),
+                    modifier = Modifier.weight(1f),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     contentPadding = PaddingValues(4.dp),
                 ) {
-                    itemsIndexed(shown, key = { _, app -> app.pkg + "/" + app.activity }) { index, app ->
-                        AppTile(app, entranceDelayMs = 35 + index * 12) { onLaunch(app) }
+                    itemsIndexed(
+                        items = shown,
+                        key = { _, app -> app.pkg + "/" + app.activity },
+                        contentType = { _, _ -> "app_tile" },
+                    ) { _, app ->
+                        AppTile(app) { onLaunch(app) }
                     }
                 }
             }
@@ -1062,22 +1066,15 @@ fun AppMenu(
 }
 
 @Composable
-fun AppTile(app: AppInfo, entranceDelayMs: Int = 0, onClick: () -> Unit) {
-    val opacity = remember(app.pkg) { Animatable(0f) }
+fun AppTile(app: AppInfo, onClick: () -> Unit) {
     val interaction = remember(app.pkg) { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val focused by interaction.collectIsFocusedAsState()
     val pressed by interaction.collectIsPressedAsState()
     val highlighted = hovered || focused || pressed
-    LaunchedEffect(app.pkg, entranceDelayMs) {
-        opacity.snapTo(0f)
-        delay(entranceDelayMs.toLong())
-        opacity.animateTo(1f, tween(180, easing = FastOutSlowInEasing))
-    }
     Column(
         Modifier.fillMaxWidth().height(124.dp)
             .graphicsLayer {
-                alpha = opacity.value
                 if (highlighted) translationX = -2.dp.toPx()
             }
             .pixelBox(

@@ -234,7 +234,7 @@ fun hasNotificationAccess(context: Context): Boolean {
     }.getOrDefault(false)
 }
 
-/** Notification access is optional and only used to read media title/artist from media notifications. */
+/** Notification access is optional; it reads Spotify metadata and public lock-screen previews in memory. */
 fun openNotificationAccessSettings(context: Context) {
     val component = ComponentName(context, MusicNotificationListener::class.java)
     val detailSettings = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)

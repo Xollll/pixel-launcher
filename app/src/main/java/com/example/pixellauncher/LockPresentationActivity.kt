@@ -159,7 +159,7 @@ private fun LockPresentationScreen(
                 Modifier.fillMaxWidth().weight(1f).padding(vertical = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Column(Modifier.weight(.34f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(.30f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     LockPanel("NOTIFICATIONS", Modifier.then(lockWindowMotion(200))) {
                         when {
                             !notificationsAllowed -> PxText("ALLOW NOTIFICATION ACCESS TO SHOW ALERTS", 19.sp, Px.dim, maxLines = 2)
@@ -179,7 +179,7 @@ private fun LockPresentationScreen(
                     }
                 }
 
-                Column(Modifier.weight(.38f).fillMaxHeight().then(lockWindowMotion(100)), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.weight(.40f).fillMaxHeight().then(lockWindowMotion(100)), horizontalAlignment = Alignment.CenterHorizontally) {
                     Spacer(Modifier.height(10.dp))
                     PxText("SYSTEM LOCKED${if (now.second % 2 == 0) "_" else " "}", 12.sp, Px.coral, fontFamily = PixelFonts.display)
                     Spacer(Modifier.height(14.dp))
@@ -212,7 +212,7 @@ private fun LockPresentationScreen(
                     Spacer(Modifier.weight(1f))
                 }
 
-                Column(Modifier.weight(.28f).fillMaxHeight()) {
+                Column(Modifier.weight(.30f).fillMaxHeight()) {
                     LockPanel("STATUS", Modifier.fillMaxWidth().then(lockWindowMotion(400))) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             LockMascot(Modifier.width(46.dp).height(40.dp), animated = true)
@@ -232,7 +232,7 @@ private fun LockPresentationScreen(
                 Spacer(Modifier.width(64.dp))
                 Spacer(Modifier.weight(1f))
                 Box(
-                    Modifier.width(380.dp).height(54.dp)
+                    Modifier.width(300.dp).height(54.dp)
                         .pixelBox(Px.panel, Px.line, shadow = 3.dp)
                         .pointerInput(onUnlock) {
                             var total = 0f

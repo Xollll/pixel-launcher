@@ -12,6 +12,7 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,7 +26,10 @@ object LockUiSetupState {
     const val PREFERENCES = "pixel_lock_ui_setup"
     const val AUTO_SETUP_ATTEMPTED = "auto_setup_attempted"
     const val WALLPAPER_APPLIED = "wallpaper_applied"
+    const val NOTIFICATION_PERMISSION_ASKED = "notification_permission_asked"
 }
+
+private const val LOCK_WALLPAPER_ASSET_URL = "file:///android_asset/lock_wallpaper.html"
 
 /** Renders the lock mockup as wallpaper; Samsung's own UI remains over it. */
 class LockWallpaperActivity : ComponentActivity() {
@@ -54,16 +58,19 @@ class LockWallpaperActivity : ComponentActivity() {
         wallpaperApplied = true
         try {
             val bitmap = Bitmap.createBitmap(webView.width, webView.height, Bitmap.Config.ARGB_8888)
-            webView.draw(Canvas(bitmap))
-            WallpaperManager.getInstance(this).setBitmap(
-                bitmap,
-                null,
-                true,
-                WallpaperManager.FLAG_LOCK,
-            )
+            try {
+                webView.draw(Canvas(bitmap))
+                WallpaperManager.getInstance(this).setBitmap(
+                    bitmap,
+                    null,
+                    true,
+                    WallpaperManager.FLAG_LOCK,
+                )
+            } finally {
+                bitmap.recycle()
+            }
             getSharedPreferences(LockUiSetupState.PREFERENCES, MODE_PRIVATE)
                 .edit().putBoolean(LockUiSetupState.WALLPAPER_APPLIED, true).apply()
-            bitmap.recycle()
             Toast.makeText(this, "Pixel lock screen applied", Toast.LENGTH_SHORT).show()
             if (!Settings.canDrawOverlays(this)) {
                 startActivity(
@@ -90,14 +97,22 @@ private fun LockWallpaperPage(onPageReady: (WebView) -> Unit) {
         factory = { context ->
             WebView(context).apply {
                 settings.javaScriptEnabled = true
-                settings.allowFileAccess = true
+                // Only this bundled asset is loaded; JavaScript is used for its local 16:10 scaling.
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
+                settings.allowFileAccessFromFileURLs = false
+                settings.allowUniversalAccessFromFileURLs = false
+                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 setBackgroundColor(android.graphics.Color.BLACK)
                 webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                        request.url.toString() != LOCK_WALLPAPER_ASSET_URL
+
                     override fun onPageFinished(view: WebView, url: String?) {
                         view.postDelayed({ onPageReady(view) }, 1200)
                     }
                 }
-                loadUrl("file:///android_asset/lock_wallpaper.html")
+                loadUrl(LOCK_WALLPAPER_ASSET_URL)
             }
         },
     )

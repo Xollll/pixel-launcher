@@ -24,7 +24,7 @@ fun loadApps(ctx: Context): List<AppInfo> {
                 label = ri.loadLabel(pm).toString(),
                 pkg = ri.activityInfo.packageName,
                 activity = ri.activityInfo.name,
-                icon = ri.loadIcon(pm).toBitmap(96, 96).asImageBitmap(),
+                icon = ri.loadIcon(pm).toBitmap(72, 72).asImageBitmap(),
             )
         }
         .sortedBy { it.label.lowercase() }
