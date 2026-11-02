@@ -5,8 +5,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.app.ActivityManager
+import android.media.AudioManager
+import android.os.Environment
 import android.os.BatteryManager
 import android.os.Build
+import android.os.StatFs
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -33,6 +37,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -110,6 +115,17 @@ private val Mint = Color(0xFF6FE39A)
 private val Yellow = Color(0xFFF2D94E)
 private val PixelSteps = Easing { floor(it * 6f) / 6f }
 
+@Composable
+private fun rememberCursorAlpha(): Float {
+    val transition = rememberInfiniteTransition(label = "terminal cursor")
+    return transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "cursor blink",
+    ).value
+}
+
 private fun readBatteryPercent(context: Context): Int {
     val manager = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
     val property = manager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
@@ -118,6 +134,23 @@ private fun readBatteryPercent(context: Context): Int {
     val level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
     val scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
     return if (level >= 0 && scale > 0) (level * 100 / scale).coerceIn(0, 100) else 0
+}
+
+private data class SystemMetrics(val ramPercent: Int, val storagePercent: Int)
+
+private fun readSystemMetrics(context: Context): SystemMetrics {
+    val memory = ActivityManager.MemoryInfo()
+    (context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.getMemoryInfo(memory)
+    val ram = if (memory.totalMem > 0) {
+        ((memory.totalMem - memory.availMem).toDouble() / memory.totalMem * 100).roundToInt().coerceIn(0, 100)
+    } else 0
+
+    val storage = runCatching {
+        val stats = StatFs(Environment.getDataDirectory().path)
+        val total = stats.totalBytes
+        if (total > 0) ((total - stats.availableBytes).toDouble() / total * 100).roundToInt().coerceIn(0, 100) else 0
+    }.getOrDefault(0)
+    return SystemMetrics(ram, storage)
 }
 
 @Composable
@@ -148,6 +181,12 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
             delay(30_000)
         }
     }
+    val systemMetrics by produceState(initialValue = SystemMetrics(0, 0), key1 = ctx) {
+        while (true) {
+            value = withContext(Dispatchers.IO) { readSystemMetrics(ctx) }
+            delay(5_000)
+        }
+    }
     val railShortcuts = remember(apps) { resolveRailShortcuts(apps) }
     val usagePackages = remember(railShortcuts) { railShortcuts.mapNotNull { it.app?.pkg }.toSet() }
     val ringItems = remember(railShortcuts, usageMillis, dailyLimits, batteryPercent, usageAllowed) {
@@ -157,7 +196,9 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
     // Reload the app list when something is installed, updated or removed.
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context?, i: Intent?) { reload++ }
+            override fun onReceive(c: Context?, i: Intent?) {
+                reload++
+            }
         }
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -196,7 +237,9 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
     }
 
     val now by produceState(LocalDateTime.now()) {
-        while (true) { value = LocalDateTime.now(); delay(1000) }
+        while (true) {
+            value = LocalDateTime.now(); delay(1000)
+        }
     }
     val deviceName = remember(ctx, resumeTick) { readDeviceName(ctx) }
     LaunchedEffect(calendarAllowed, now.toLocalDate(), resumeTick) {
@@ -238,7 +281,7 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
                 )
                 RightDashboard(
                     ctx = ctx,
-                    usageAllowed = usageAllowed,
+                    systemMetrics = systemMetrics,
                     notificationAllowed = notificationAllowed,
                     track = track,
                     agenda = agenda,
@@ -337,18 +380,42 @@ private fun LeftDashboard(
     onAddTodo: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val cursorAlpha = rememberCursorAlpha()
     Column(modifier) {
         Column {
-            PxText("GOOD ${now.format(DateTimeFormatter.ofPattern("a", Locale.ENGLISH)).let { if (it == "AM") "MORNING" else "EVENING" }}", 28.sp, Px.coral)
-            PxText(now.format(TIME_FMT), 76.sp, Px.cream, FontWeight.Bold, fontFamily = PixelFonts.display)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PxText(
+                    "GOOD ${
+                        now.format(DateTimeFormatter.ofPattern("a", Locale.ENGLISH))
+                            .let { if (it == "AM") "MORNING" else "EVENING" }
+                    }", 28.sp, Px.coral
+                )
+                PxText("_", 28.sp, Px.coral, modifier = Modifier.graphicsLayer { alpha = cursorAlpha })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val clock = now.format(TIME_FMT)
+                PxText(clock.substringBefore(':'), 76.sp, Px.cream, FontWeight.Bold, fontFamily = PixelFonts.display)
+                PxText(
+                    ":",
+                    76.sp,
+                    Px.cream,
+                    FontWeight.Bold,
+                    modifier = Modifier.graphicsLayer { alpha = cursorAlpha },
+                    fontFamily = PixelFonts.display
+                )
+                PxText(clock.substringAfter(':'), 76.sp, Px.cream, FontWeight.Bold, fontFamily = PixelFonts.display)
+            }
             PxText(now.format(DATE_FMT).uppercase(Locale.ENGLISH), 28.sp, Px.dim)
         }
         Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth().height(112.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(88.dp), verticalAlignment = Alignment.CenterVertically) {
             PixelMascot(Modifier.width(108.dp).fillMaxHeight())
             Spacer(Modifier.width(10.dp))
             WindowPanel(modifier = Modifier.weight(1f).fillMaxHeight(), entranceDelayMs = 100) {
-                PxText("> hello, ${deviceName}_", 24.sp, Px.cream, maxLines = 2)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PxText("> hello, $deviceName", 24.sp, Px.cream, maxLines = 2)
+                    PxText("_", 24.sp, Px.cream, modifier = Modifier.graphicsLayer { alpha = cursorAlpha })
+                }
                 Spacer(Modifier.height(4.dp))
                 PxText("${todos.count { !it.done }} TASKS LEFT TODAY", 20.sp, Px.dim)
             }
@@ -367,11 +434,14 @@ private fun LeftDashboard(
 @Composable
 private fun TodoRow(task: TodoTask, onToggle: (Int) -> Unit, onRemove: (Int) -> Unit) {
     Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
-        PxText(if (task.done) "[x]" else "[ ]", 22.sp, if (task.done) Px.coral else Px.dim,
+        PxText(
+            if (task.done) "[x]" else "[ ]", 22.sp, if (task.done) Px.coral else Px.dim,
             modifier = Modifier.clickable { onToggle(task.id) })
         Spacer(Modifier.width(8.dp))
-        PxText(task.title, 22.sp, if (task.done) Px.dim else Px.cream,
-            modifier = Modifier.weight(1f).clickable { onToggle(task.id) }, maxLines = 1)
+        PxText(
+            task.title, 22.sp, if (task.done) Px.dim else Px.cream,
+            modifier = Modifier.weight(1f).clickable { onToggle(task.id) }, maxLines = 1
+        )
         PxText("×", 24.sp, Px.dim, modifier = Modifier.clickable { onRemove(task.id) })
     }
 }
@@ -449,7 +519,7 @@ private fun PixelDust(modifier: Modifier = Modifier) {
 @Composable
 private fun RightDashboard(
     ctx: Context,
-    usageAllowed: Boolean,
+    systemMetrics: SystemMetrics,
     notificationAllowed: Boolean,
     track: PlayingTrack?,
     agenda: List<AgendaEvent>,
@@ -466,6 +536,7 @@ private fun RightDashboard(
                     PxText("YOUR CALENDAR AGENDA", 21.sp, Px.dim)
                     SettingsActionButton("ENABLE CALENDAR ACCESS", onEnableCalendar)
                 }
+
                 agenda.isEmpty() -> PxText("NOTHING SCHEDULED TODAY", 22.sp, Px.dim)
                 else -> agenda.forEach { AgendaRow(it.time, it.title) }
             }
@@ -488,21 +559,20 @@ private fun RightDashboard(
                     )
                 } else {
                     PxText("SPOTIFY CONTROLS", 21.sp, Px.cream, maxLines = 1)
-                    PxText("Media controls and public lock-screen previews use notification access.", 19.sp, Px.dim, maxLines = 2)
+                    PxText(
+                        "Media controls and public lock-screen previews use notification access.",
+                        19.sp,
+                        Px.dim,
+                        maxLines = 2
+                    )
                     SettingsActionButton("ENABLE MEDIA ACCESS", onEnableNotifications)
                 }
+                NowPlayingVolume(ctx)
             }
             WindowPanel(title = "SYS.MONITOR", modifier = Modifier.weight(1f), entranceDelayMs = 480) {
-                if (usageAllowed) {
-                    PxText("APP USAGE ACCESS: ON", 17.sp, Mint)
-                    MonitorRow("CPU", 38, Px.coral)
-                    MonitorRow("RAM", 61, Px.coral)
-                    MonitorRow("STORAGE", 72, Yellow)
-                } else {
-                    PxText("DAILY APP LIMITS PAUSED", 18.sp, Px.coral, maxLines = 1)
-                    PxText("Enable Usage Access in Settings to read today's app time.", 17.sp, Px.dim, maxLines = 2)
-                    SettingsActionButton("ENABLE USAGE ACCESS", onEnableUsage)
-                }
+                PxText("LIVE DEVICE MEMORY", 17.sp, Mint)
+                MonitorRow("RAM USED", systemMetrics.ramPercent, Px.coral)
+                MonitorRow("STORAGE USED", systemMetrics.storagePercent, Yellow)
             }
         }
 
@@ -532,6 +602,53 @@ private fun PlaybackControls(playing: Boolean, onPlayPause: () -> Unit) {
         PlaybackButton("|<", Modifier.weight(1f)) { MusicPlayback.skipPrevious() }
         PlaybackButton(if (playing) "PAUSE" else "PLAY", Modifier.weight(1.4f), onPlayPause)
         PlaybackButton(">|", Modifier.weight(1f)) { MusicPlayback.skipNext() }
+    }
+}
+
+@Composable
+private fun NowPlayingVolume(context: Context) {
+    val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxVolume = remember(audioManager) { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    var volume by remember(audioManager) {
+        mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).coerceIn(0, maxVolume))
+    }
+    LaunchedEffect(audioManager) {
+        while (true) {
+            volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).coerceIn(0, maxVolume)
+            delay(800)
+        }
+    }
+    val setVolumeAt: (Float, Float) -> Unit = { x, width ->
+        val next = ((x / width.coerceAtLeast(1f)).coerceIn(0f, 1f) * maxVolume).roundToInt()
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0)
+        volume = next
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        PxText("VOL", 16.sp, Px.dim)
+        Spacer(Modifier.width(8.dp))
+        Box(
+            Modifier.weight(1f).height(24.dp)
+                .pointerInput(maxVolume) {
+                    detectTapGestures { setVolumeAt(it.x, size.width.toFloat()) }
+                }
+                .pointerInput(maxVolume) {
+                    detectDragGestures { change, _ ->
+                        change.consume()
+                        setVolumeAt(change.position.x, size.width.toFloat())
+                    }
+                },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Canvas(Modifier.fillMaxWidth().height(12.dp)) {
+                val centerY = size.height / 2f
+                drawRect(Color(0xFF2A1C16), Offset.Zero, Size(size.width, 6.dp.toPx()))
+                drawRect(Px.coral, Offset.Zero, Size(size.width * volume / maxVolume, 6.dp.toPx()))
+                val thumbX = size.width * volume / maxVolume
+                drawRect(Px.cream, Offset((thumbX - 4.dp.toPx()).coerceIn(0f, size.width - 8.dp.toPx()), centerY - 6.dp.toPx()), Size(8.dp.toPx(), 12.dp.toPx()))
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        PxText("${(volume * 100 / maxVolume)}%", 16.sp, Px.cream)
     }
 }
 
@@ -585,7 +702,9 @@ private fun SegmentedBar(percent: Int, color: Color, modifier: Modifier = Modifi
         label = "bar pulse",
     )
     Box(modifier.height(9.dp).background(Color(0xFF1C1411))) {
-        Row(Modifier.fillMaxWidth(percent.coerceIn(0, 100) / 100f).fillMaxHeight().graphicsLayer { this.alpha = alpha }) {
+        Row(
+            Modifier.fillMaxWidth(percent.coerceIn(0, 100) / 100f).fillMaxHeight()
+                .graphicsLayer { this.alpha = alpha }) {
             repeat(count) { index ->
                 Box(
                     Modifier.weight(1f).fillMaxHeight().padding(end = 2.dp)
@@ -680,6 +799,7 @@ private fun WindowPanel(
 @Composable
 private fun SearchWindow(appCount: Int, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
+    val cursorAlpha = rememberCursorAlpha()
     Row(
         modifier.height(58.dp)
             .drawBehind {
@@ -693,7 +813,8 @@ private fun SearchWindow(appCount: Int, modifier: Modifier = Modifier, onClick: 
             .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PxText("> SEARCH APPS_", 24.sp, Px.cream)
+        PxText("> SEARCH APPS", 24.sp, Px.cream)
+        PxText("_", 24.sp, Px.cream, modifier = Modifier.graphicsLayer { alpha = cursorAlpha })
         Spacer(Modifier.weight(1f))
         PxText("$appCount APPS", 20.sp, Px.dim)
     }
@@ -860,7 +981,12 @@ private fun RailShortcutButton(ring: RingItem, onClick: () -> Unit, onLongClick:
                 BatteryGlyph(Modifier.size(30.dp))
             } else PxText("?", 26.sp, Px.cream, fontFamily = PixelFonts.display)
         }
-        PxText(if (!ring.usageAccess && !ring.battery) "--" else "${ring.percent}%", 20.sp, Px.cream, align = TextAlign.Center)
+        PxText(
+            if (!ring.usageAccess && !ring.battery) "--" else "${ring.percent}%",
+            20.sp,
+            Px.cream,
+            align = TextAlign.Center
+        )
     }
 }
 
@@ -873,7 +999,11 @@ private fun BatteryGlyph(modifier: Modifier = Modifier) {
         val left = (size.width - bodyWidth) / 2f
         val top = (size.height - bodyHeight) / 2f
         drawRect(Px.cream, Offset(left, top), Size(bodyWidth, bodyHeight), style = Stroke(stroke))
-        drawRect(Px.cream, Offset(left + bodyWidth, top + bodyHeight * 0.3f), Size(size.width * 0.12f, bodyHeight * 0.4f))
+        drawRect(
+            Px.cream,
+            Offset(left + bodyWidth, top + bodyHeight * 0.3f),
+            Size(size.width * 0.12f, bodyHeight * 0.4f)
+        )
         drawRect(Px.coral, Offset(left + stroke, top + stroke), Size(bodyWidth * 0.52f, bodyHeight - stroke * 2))
     }
 }
@@ -933,7 +1063,10 @@ private fun TodoTaskDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             PxText("ADD TODO", 13.sp, Px.coral, fontFamily = PixelFonts.display)
-            Box(Modifier.fillMaxWidth().height(48.dp).pixelBox(Color(0xFF0A0807), Px.line, shadow = 0.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
+            Box(
+                Modifier.fillMaxWidth().height(48.dp).pixelBox(Color(0xFF0A0807), Px.line, shadow = 0.dp)
+                    .padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart
+            ) {
                 if (title.isBlank()) PxText("Task name...", 22.sp, Px.dim)
                 BasicTextField(
                     value = title,
@@ -1091,6 +1224,12 @@ fun AppTile(app: AppInfo, onClick: () -> Unit) {
         verticalArrangement = Arrangement.SpaceEvenly,
     ) {
         Image(app.icon, contentDescription = app.label, modifier = Modifier.size(44.dp))
-        PxText(app.label.uppercase(Locale.ENGLISH), 22.sp, if (highlighted) Px.coral else Px.cream, maxLines = 1, align = TextAlign.Center)
+        PxText(
+            app.label.uppercase(Locale.ENGLISH),
+            22.sp,
+            if (highlighted) Px.coral else Px.cream,
+            maxLines = 1,
+            align = TextAlign.Center
+        )
     }
 }
