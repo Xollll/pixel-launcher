@@ -45,10 +45,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
@@ -81,6 +83,7 @@ fun HomeScreen(homeTick: Int) {
         val manager = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).coerceIn(0, 100)
     }
+    val railShortcuts = remember(apps) { resolveRailShortcuts(apps) }
 
     // Reload the app list when something is installed, updated or removed.
     DisposableEffect(Unit) {
@@ -123,7 +126,8 @@ fun HomeScreen(homeTick: Int) {
         Column(
             Modifier.fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(48.dp),
+                .padding(start = 48.dp, top = 48.dp, bottom = 48.dp, end = 200.dp)
+                .blur(if (menuOpen) 8.dp else 0.dp),
         ) {
             TopBar(batteryPercent)
             Spacer(Modifier.height(16.dp))
@@ -134,11 +138,15 @@ fun HomeScreen(homeTick: Int) {
             }
 
             Spacer(Modifier.height(14.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                SearchWindow(appCount = apps.size, modifier = Modifier.weight(1f)) { menuOpen = true }
-                MenuButton(Modifier.width(140.dp).height(58.dp)) { menuOpen = true }
-            }
+            SearchWindow(appCount = apps.size, modifier = Modifier.fillMaxWidth()) { menuOpen = true }
         }
+
+        EdgeShortcutRail(
+            shortcuts = railShortcuts,
+            onLaunch = { launchApp(ctx, it) },
+            onMenu = { menuOpen = true },
+            modifier = Modifier.align(Alignment.CenterEnd).blur(if (menuOpen) 8.dp else 0.dp),
+        )
 
         // Keep the working Milestone 1 app list and search while the home layout is rebuilt.
         if (menuOpen) {
@@ -389,14 +397,157 @@ private fun SearchWindow(appCount: Int, modifier: Modifier = Modifier, onClick: 
     }
 }
 
+private data class RailShortcutSpec(
+    val label: String,
+    val percent: Int,
+    val color: Color,
+    val matches: List<String>,
+)
+
+private data class RailShortcut(val spec: RailShortcutSpec, val app: AppInfo?)
+
+private val RailShortcutSpecs = listOf(
+    RailShortcutSpec("BROWSER", 73, Px.coral, listOf("browser", "chrome", "internet")),
+    RailShortcutSpec("CHAT", 21, Mint, listOf("chat", "message", "whatsapp", "telegram")),
+    RailShortcutSpec("MUSIC", 52, Yellow, listOf("music", "spotify")),
+    RailShortcutSpec("CAMERA", 38, Px.coral, listOf("camera")),
+)
+
+private fun resolveRailShortcuts(apps: List<AppInfo>): List<RailShortcut> {
+    val used = mutableSetOf<AppInfo>()
+    return RailShortcutSpecs.map { spec ->
+        val match = apps.firstOrNull { app ->
+            app !in used && spec.matches.any { token -> app.label.contains(token, ignoreCase = true) }
+        } ?: apps.firstOrNull { it !in used }
+        if (match != null) used += match
+        RailShortcut(spec, match)
+    }
+}
+
 @Composable
-fun MenuButton(modifier: Modifier, onClick: () -> Unit) {
-    Box(
-        modifier.pixelBox(Px.coral, Px.coral, shadowColor = Px.coralDark)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+private fun EdgeShortcutRail(
+    shortcuts: List<RailShortcut>,
+    onLaunch: (AppInfo) -> Unit,
+    onMenu: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier.width(152.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        PxText("MENU", 14.sp, Px.bg, FontWeight.Bold, fontFamily = PixelFonts.display)
+        Box(Modifier.fillMaxWidth().height(500.dp)) {
+            PixelRailShape(Modifier.fillMaxSize())
+            Box(
+                Modifier.fillMaxHeight().padding(start = 40.dp, top = 34.dp, bottom = 24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    Modifier.fillMaxHeight().width(112.dp),
+                    verticalArrangement = Arrangement.SpaceBetween,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    shortcuts.forEach { shortcut ->
+                        RailShortcutButton(shortcut) {
+                            shortcut.app?.let(onLaunch)
+                        }
+                    }
+                }
+            }
+            Box(
+                Modifier.align(Alignment.TopCenter).padding(top = 13.dp)
+                    .width(30.dp).height(5.dp).background(Px.coral),
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        PixelMenuCircle(onClick = onMenu)
+    }
+}
+
+@Composable
+private fun PixelRailShape(modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val step = 8.dp.toPx()
+        val left = size.width * 0.25f
+        val path = Path().apply {
+            moveTo(size.width, 0f)
+            lineTo(left + step * 4, 0f)
+            lineTo(left + step * 3, 0f)
+            lineTo(left + step * 3, step)
+            lineTo(left + step * 2, step)
+            lineTo(left + step * 2, step * 2)
+            lineTo(left + step, step * 2)
+            lineTo(left + step, step * 4)
+            lineTo(left, step * 4)
+            lineTo(left, size.height - step * 4)
+            lineTo(left + step, size.height - step * 4)
+            lineTo(left + step, size.height - step * 2)
+            lineTo(left + step * 2, size.height - step * 2)
+            lineTo(left + step * 2, size.height - step)
+            lineTo(left + step * 3, size.height - step)
+            lineTo(left + step * 3, size.height)
+            lineTo(size.width, size.height)
+            close()
+        }
+        drawPath(path, Color(0xFF0B0706))
+        drawPath(path, Px.coral, style = Stroke(width = 3.dp.toPx()))
+    }
+}
+
+@Composable
+private fun RailShortcutButton(shortcut: RailShortcut, onClick: () -> Unit) {
+    val spec = shortcut.spec
+    Column(
+        Modifier.width(100.dp).clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                val stroke = 7.dp.toPx()
+                val radius = (size.minDimension - stroke) / 2f
+                val topLeft = Offset((size.width - radius * 2f) / 2f, (size.height - radius * 2f) / 2f)
+                val ringSize = Size(radius * 2f, radius * 2f)
+                drawArc(
+                    Color(0xFF2A1C16), 0f, 360f, false, topLeft, ringSize,
+                    style = Stroke(stroke),
+                )
+                drawArc(
+                    spec.color, -90f, 360f * spec.percent / 100f, false, topLeft, ringSize,
+                    style = Stroke(stroke),
+                )
+            }
+            shortcut.app?.let { app ->
+                Image(app.icon, contentDescription = app.label, modifier = Modifier.size(34.dp))
+            } ?: PxText("?", 26.sp, Px.cream, fontFamily = PixelFonts.display)
+        }
+        PxText("${spec.percent}%", 22.sp, Px.cream, align = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun PixelMenuCircle(onClick: () -> Unit) {
+    Column(
+        Modifier.width(92.dp).clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Box(Modifier.size(92.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                val rowWidths = intArrayOf(24, 40, 56, 64, 72, 72, 80, 80, 88, 88, 88, 88, 88, 88, 88, 80, 80, 72, 72, 64, 56, 40, 24)
+                rowWidths.forEachIndexed { row, width ->
+                    val cell = size.height / rowWidths.size
+                    val pixelWidth = size.width * width / 92f
+                    drawRect(Px.coral, Offset((size.width - pixelWidth) / 2f, row * cell), Size(pixelWidth, cell))
+                }
+            }
+            Canvas(Modifier.size(32.dp)) {
+                val cell = size.minDimension / 6f
+                for (row in 0..1) for (col in 0..1) {
+                    drawRect(Px.bg, Offset((col * 3 + 0.5f) * cell, (row * 3 + 0.5f) * cell), Size(2 * cell, 2 * cell))
+                }
+            }
+        }
+        PxText("MENU", 10.sp, Px.cream, fontFamily = PixelFonts.display)
     }
 }
 
@@ -420,48 +571,62 @@ fun AppMenu(
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            Modifier.fillMaxWidth(0.8f).fillMaxHeight(0.82f)
-                .pixelBox(Px.panel, Px.coral, shadow = 6.dp)
+            Modifier.fillMaxWidth(0.78f).fillMaxHeight(0.72f)
+                .pixelBox(Color(0xFF120D0B), Px.coral, shadow = 6.dp, borderWidth = 2.dp)
                 .clickable(interactionSource = noRippleInner, indication = null) {}
-                .padding(24.dp),
+                .padding(2.dp),
         ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                PxText("~/apps - ${shown.size} items", 20.sp, Px.dim, modifier = Modifier.weight(1f))
+            Row(
+                Modifier.fillMaxWidth().height(52.dp).drawBehind {
+                    val y = size.height - 1.dp.toPx()
+                    drawLine(Color(0xFF3A2419), Offset(0f, y), Offset(size.width, y), 2.dp.toPx())
+                }.padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Box(Modifier.size(11.dp).background(Px.coral))
+                Box(Modifier.size(11.dp).background(Px.line))
+                Box(Modifier.size(11.dp).background(Px.line))
+                PxText("~/apps — ${shown.size} items", 23.sp, Px.dim, modifier = Modifier.weight(1f))
                 Box(
-                    Modifier.pixelBox(shadow = 0.dp).clickable(onClick = onClose)
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                ) { PxText("[X] CLOSE", 14.sp, Px.coral, FontWeight.Bold) }
+                    Modifier.width(104.dp).height(32.dp)
+                        .pixelBox(Px.panel, Px.line, shadow = 0.dp)
+                        .clickable(onClick = onClose),
+                    contentAlignment = Alignment.Center,
+                ) { PxText("[X] CLOSE", 10.sp, Px.cream, fontFamily = PixelFonts.display) }
             }
-            Spacer(Modifier.height(16.dp))
-            Box(Modifier.fillMaxWidth().pixelBox(Px.bg, Px.line, shadow = 0.dp).padding(14.dp)) {
+
+            Column(
+                Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
                 BasicTextField(
                     value = query,
                     onValueChange = onQuery,
                     singleLine = true,
-                    textStyle = TextStyle(color = Px.cream, fontSize = 20.sp, fontFamily = PixelFonts.body),
+                    textStyle = TextStyle(color = Px.cream, fontSize = 28.sp, fontFamily = PixelFonts.body),
                     cursorBrush = SolidColor(Px.coral),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(40.dp),
                     decorationBox = { inner ->
-                        Row {
-                            PxText("> ", 20.sp, Px.coral)
-                            Box {
-                                if (query.isEmpty()) PxText("search apps", 20.sp, Px.dim)
-                                inner()
-                            }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            PxText("> ", 28.sp, Px.coral)
+                            PxText("ls apps/", 28.sp, Px.cream)
+                            if (query.isNotEmpty()) Spacer(Modifier.width(8.dp))
+                            inner()
                         }
                     },
                 )
-            }
-            Spacer(Modifier.height(16.dp))
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(140.dp),
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(6.dp),
-            ) {
-                items(shown, key = { it.pkg + "/" + it.activity }) { app ->
-                    AppTile(app) { onLaunch(app) }
+
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(4),
+                    modifier = Modifier.height(400.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = PaddingValues(4.dp),
+                ) {
+                    items(shown, key = { it.pkg + "/" + it.activity }) { app ->
+                        AppTile(app, selected = shown.firstOrNull() == app) { onLaunch(app) }
+                    }
                 }
             }
         }
@@ -469,13 +634,21 @@ fun AppMenu(
 }
 
 @Composable
-fun AppTile(app: AppInfo, onClick: () -> Unit) {
+fun AppTile(app: AppInfo, selected: Boolean = false, onClick: () -> Unit) {
     Column(
-        Modifier.fillMaxWidth().pixelBox().clickable(onClick = onClick).padding(12.dp),
+        Modifier.fillMaxWidth().height(124.dp)
+            .pixelBox(
+                fill = Color(0xFF120D0B),
+                border = if (selected) Px.coral else Px.line,
+                shadow = 4.dp,
+                shadowColor = if (selected) Px.coralDark else Color.Black,
+            )
+            .clickable(onClick = onClick)
+            .padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceEvenly,
     ) {
-        Image(app.icon, contentDescription = app.label, modifier = Modifier.size(56.dp))
-        Spacer(Modifier.height(8.dp))
-        PxText(app.label, 14.sp, Px.cream, maxLines = 2, align = TextAlign.Center)
+        Image(app.icon, contentDescription = app.label, modifier = Modifier.size(44.dp))
+        PxText(app.label.uppercase(Locale.ENGLISH), 22.sp, if (selected) Px.coral else Px.cream, maxLines = 1, align = TextAlign.Center)
     }
 }
