@@ -26,7 +26,8 @@ class LockPresentationService : Service() {
             override fun onReceive(context: Context, intent: Intent) {
                 if (intent.action != Intent.ACTION_SCREEN_ON) return
                 val keyguard = getSystemService(KeyguardManager::class.java)
-                if (keyguard?.isKeyguardLocked == true) showLockPresentation()
+                val homeRole = getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_HOME) == true
+                if (homeRole && keyguard?.isKeyguardLocked == true) showLockPresentation()
             }
         }
         ContextCompat.registerReceiver(

@@ -125,6 +125,7 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
     val ctx = LocalContext.current
     var apps by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
     var menuOpen by remember { mutableStateOf(false) }
+    var returningToMenuFromApp by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var reload by remember { mutableIntStateOf(0) }
     var editingApp by remember { mutableStateOf<AppInfo?>(null) }
@@ -178,7 +179,12 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
             delay(60_000)
         }
     }
-    LaunchedEffect(homeTick) { menuOpen = false }
+    LaunchedEffect(homeTick) {
+        if (!returningToMenuFromApp) menuOpen = false
+    }
+    LaunchedEffect(resumeTick) {
+        if (returningToMenuFromApp) returningToMenuFromApp = false
+    }
     LaunchedEffect(menuOpen) { if (!menuOpen) query = "" }
 
     // On a launcher, Back never leaves home. It only closes the app menu.
@@ -251,7 +257,6 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
         EdgeShortcutRail(
             rings = ringItems,
             onLaunch = { launchApp(ctx, it) },
-            onMenu = { menuOpen = true },
             onEnableUsage = { openUsageAccessSettings(ctx) },
             onEditLimit = { editingApp = it },
             modifier = Modifier.align(Alignment.CenterEnd).blur(if (menuOpen || editingApp != null) 8.dp else 0.dp),
@@ -268,7 +273,10 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
                 query = query,
                 onQuery = { query = it },
                 onClose = { menuOpen = false },
-                onLaunch = { launchApp(ctx, it); menuOpen = false },
+                onLaunch = {
+                    returningToMenuFromApp = true
+                    launchApp(ctx, it)
+                },
             )
         }
 
@@ -504,9 +512,6 @@ private fun RightDashboard(
                 PanelButton(ctx, "BT", Settings.ACTION_BLUETOOTH_SETTINGS, true, Modifier.weight(1f))
                 PanelButton(ctx, "DND", Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS, false, Modifier.weight(1f))
                 PanelButton(ctx, "ROTATE", Settings.ACTION_DISPLAY_SETTINGS, false, Modifier.weight(1f))
-                PanelButton(ctx, "LOCK UI", "", false, Modifier.weight(1f)) {
-                    ctx.startActivity(Intent(ctx, LockWallpaperActivity::class.java))
-                }
             }
         }
     }
@@ -762,45 +767,37 @@ private fun resolveRailShortcuts(apps: List<AppInfo>): List<RailShortcut> {
 private fun EdgeShortcutRail(
     rings: List<RingItem>,
     onLaunch: (AppInfo) -> Unit,
-    onMenu: () -> Unit,
     onEnableUsage: () -> Unit,
     onEditLimit: (AppInfo) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier.width(152.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(Modifier.fillMaxWidth().height(500.dp)) {
-            PixelRailShape(Modifier.fillMaxSize())
-            Box(
-                Modifier.fillMaxHeight().padding(start = 40.dp, top = 34.dp, bottom = 24.dp),
-                contentAlignment = Alignment.Center,
+    Box(modifier.width(152.dp).height(500.dp)) {
+        PixelRailShape(Modifier.fillMaxSize())
+        Box(
+            Modifier.fillMaxHeight().padding(start = 40.dp, top = 34.dp, bottom = 24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                Modifier.fillMaxHeight().width(112.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Column(
-                    Modifier.fillMaxHeight().width(112.dp),
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    rings.forEach { ring ->
-                        RailShortcutButton(
-                            ring = ring,
-                            onClick = { ring.app?.let(onLaunch) },
-                            onLongClick = {
-                                if (ring.app == null || ring.battery) return@RailShortcutButton
-                                if (ring.usageAccess) onEditLimit(ring.app) else onEnableUsage()
-                            },
-                        )
-                    }
+                rings.forEach { ring ->
+                    RailShortcutButton(
+                        ring = ring,
+                        onClick = { ring.app?.let(onLaunch) },
+                        onLongClick = {
+                            if (ring.app == null || ring.battery) return@RailShortcutButton
+                            if (ring.usageAccess) onEditLimit(ring.app) else onEnableUsage()
+                        },
+                    )
                 }
             }
-            Box(
-                Modifier.align(Alignment.TopCenter).padding(top = 13.dp)
-                    .width(30.dp).height(5.dp).background(Px.coral),
-            )
         }
-        Spacer(Modifier.height(16.dp))
-        PixelMenuCircle(onClick = onMenu)
+        Box(
+            Modifier.align(Alignment.TopCenter).padding(top = 13.dp)
+                .width(30.dp).height(5.dp).background(Px.coral),
+        )
     }
 }
 
@@ -878,43 +875,6 @@ private fun BatteryGlyph(modifier: Modifier = Modifier) {
         drawRect(Px.cream, Offset(left, top), Size(bodyWidth, bodyHeight), style = Stroke(stroke))
         drawRect(Px.cream, Offset(left + bodyWidth, top + bodyHeight * 0.3f), Size(size.width * 0.12f, bodyHeight * 0.4f))
         drawRect(Px.coral, Offset(left + stroke, top + stroke), Size(bodyWidth * 0.52f, bodyHeight - stroke * 2))
-    }
-}
-
-@Composable
-private fun PixelMenuCircle(onClick: () -> Unit) {
-    val transition = rememberInfiniteTransition(label = "menu pulse")
-    val pulse by transition.animateFloat(
-        1f, 1.035f,
-        infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse),
-        label = "menu glow pulse",
-    )
-    Column(
-        Modifier.width(92.dp).clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Box(
-            Modifier.size(92.dp).graphicsLayer { scaleX = pulse; scaleY = pulse }
-                .drawBehind { drawRect(Px.coral.copy(alpha = 0.18f * (pulse - 1f) / 0.035f), size = size) },
-            contentAlignment = Alignment.Center,
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                val rowWidths = intArrayOf(24, 40, 56, 64, 72, 72, 80, 80, 88, 88, 88, 88, 88, 88, 88, 80, 80, 72, 72, 64, 56, 40, 24)
-                rowWidths.forEachIndexed { row, width ->
-                    val cell = size.height / rowWidths.size
-                    val pixelWidth = size.width * width / 92f
-                    drawRect(Px.coral, Offset((size.width - pixelWidth) / 2f, row * cell), Size(pixelWidth, cell))
-                }
-            }
-            Canvas(Modifier.size(32.dp)) {
-                val cell = size.minDimension / 6f
-                for (row in 0..1) for (col in 0..1) {
-                    drawRect(Px.bg, Offset((col * 3 + 0.5f) * cell, (row * 3 + 0.5f) * cell), Size(2 * cell, 2 * cell))
-                }
-            }
-        }
-        PxText("MENU", 10.sp, Px.cream, fontFamily = PixelFonts.display)
     }
 }
 

@@ -40,8 +40,23 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumeTick.intValue++
+        if (!isSelectedAsHome()) {
+            stopService(Intent(this, LockPresentationService::class.java))
+            return
+        }
+
+        val setup = getSharedPreferences(LockUiSetupState.PREFERENCES, MODE_PRIVATE)
+        if (!setup.getBoolean(LockUiSetupState.AUTO_SETUP_ATTEMPTED, false)) {
+            setup.edit().putBoolean(LockUiSetupState.AUTO_SETUP_ATTEMPTED, true).apply()
+            runCatching { startActivity(Intent(this, LockWallpaperActivity::class.java)) }
+                .onFailure { setup.edit().putBoolean(LockUiSetupState.AUTO_SETUP_ATTEMPTED, false).apply() }
+            return
+        }
         syncLockPresentationService()
     }
+
+    private fun isSelectedAsHome(): Boolean =
+        getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_HOME) == true
 
     private fun syncLockPresentationService() {
         val service = Intent(this, LockPresentationService::class.java)

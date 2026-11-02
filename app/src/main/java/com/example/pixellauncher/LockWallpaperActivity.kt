@@ -21,6 +21,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.IOException
 
+object LockUiSetupState {
+    const val PREFERENCES = "pixel_lock_ui_setup"
+    const val AUTO_SETUP_ATTEMPTED = "auto_setup_attempted"
+    const val WALLPAPER_APPLIED = "wallpaper_applied"
+}
+
 /** Renders the lock mockup as wallpaper; Samsung's own UI remains over it. */
 class LockWallpaperActivity : ComponentActivity() {
     private var wallpaperApplied = false
@@ -55,6 +61,8 @@ class LockWallpaperActivity : ComponentActivity() {
                 true,
                 WallpaperManager.FLAG_LOCK,
             )
+            getSharedPreferences(LockUiSetupState.PREFERENCES, MODE_PRIVATE)
+                .edit().putBoolean(LockUiSetupState.WALLPAPER_APPLIED, true).apply()
             bitmap.recycle()
             Toast.makeText(this, "Pixel lock screen applied", Toast.LENGTH_SHORT).show()
             if (!Settings.canDrawOverlays(this)) {

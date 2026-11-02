@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -159,7 +160,7 @@ private fun LockPresentationScreen(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Column(Modifier.weight(.34f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    LockPanel("NOTIFICATIONS", Modifier.weight(1f).then(lockWindowMotion(200))) {
+                    LockPanel("NOTIFICATIONS", Modifier.then(lockWindowMotion(200))) {
                         when {
                             !notificationsAllowed -> PxText("ALLOW NOTIFICATION ACCESS TO SHOW ALERTS", 19.sp, Px.dim, maxLines = 2)
                             alerts.isEmpty() -> PxText("NO NEW NOTIFICATIONS", 22.sp, Px.dim)
@@ -172,7 +173,7 @@ private fun LockPresentationScreen(
                             }
                         }
                     }
-                    LockPanel("~/lock", Modifier.weight(.65f).then(lockWindowMotion(500))) {
+                    LockPanel("~/lock", Modifier.then(lockWindowMotion(500))) {
                         PxText("> status --secure", 22.sp, Px.cream)
                         PxText("Waiting for system authentication_", 19.sp, Px.dim, maxLines = 1)
                     }
@@ -185,7 +186,7 @@ private fun LockPresentationScreen(
                     PxText(now.format(LockTimeFormat).replace(":", if (now.second % 2 == 0) ":" else " "), 58.sp, Px.cream, weight = FontWeight.Bold, fontFamily = PixelFonts.display)
                     PxText(now.format(LockDateFormat).uppercase(Locale.ENGLISH), 22.sp, Px.dim)
                     Spacer(Modifier.weight(1f))
-                    LockMascot(Modifier.width(116.dp).height(104.dp), animated = true)
+                    LockMascot(Modifier.width(140.dp).height(122.dp), animated = true)
                     Spacer(Modifier.height(10.dp))
                     Canvas(Modifier.width(210.dp).height(28.dp)) {
                         val path = Path().apply {
@@ -193,13 +194,26 @@ private fun LockPresentationScreen(
                             lineTo(size.width, size.height * .3f); lineTo(size.width * .5f, 0f); close()
                         }
                         drawPath(path, Color(0x22120D0B))
+                        clipPath(path) {
+                            val gridStep = 14.dp.toPx()
+                            var x = 0f
+                            while (x <= size.width) {
+                                drawLine(Px.line.copy(alpha = .42f), androidx.compose.ui.geometry.Offset(x, 0f), androidx.compose.ui.geometry.Offset(x, size.height), 1.dp.toPx())
+                                x += gridStep
+                            }
+                            var y = 0f
+                            while (y <= size.height) {
+                                drawLine(Px.line.copy(alpha = .42f), androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Offset(size.width, y), 1.dp.toPx())
+                                y += gridStep
+                            }
+                        }
                         drawPath(path, Px.line, style = Stroke(1.dp.toPx()))
                     }
                     Spacer(Modifier.weight(1f))
                 }
 
                 Column(Modifier.weight(.28f).fillMaxHeight()) {
-                    LockPanel("STATUS", Modifier.fillMaxWidth().weight(1f).then(lockWindowMotion(400))) {
+                    LockPanel("STATUS", Modifier.fillMaxWidth().then(lockWindowMotion(400))) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             LockMascot(Modifier.width(46.dp).height(40.dp), animated = true)
                             Column {
@@ -215,7 +229,7 @@ private fun LockPresentationScreen(
             }
 
             Row(Modifier.fillMaxWidth().height(58.dp).then(lockWindowMotion(1000)), verticalAlignment = Alignment.CenterVertically) {
-                Spacer(Modifier.width(150.dp))
+                Spacer(Modifier.width(64.dp))
                 Spacer(Modifier.weight(1f))
                 Box(
                     Modifier.width(380.dp).height(54.dp)
@@ -231,7 +245,7 @@ private fun LockPresentationScreen(
                     contentAlignment = Alignment.Center,
                 ) { LockUnlockPrompt(now.second % 2 == 0) }
                 Spacer(Modifier.weight(1f))
-                LockAction("CAMERA", Modifier.width(150.dp), onClick = onCamera)
+                LockCameraButton(Modifier.width(64.dp), onClick = onCamera)
             }
         }
     }
@@ -298,16 +312,21 @@ private fun lockWindowMotion(delayMillis: Int): Modifier {
 }
 
 @Composable
-private fun LockAction(label: String, modifier: Modifier, onClick: () -> Unit) {
+private fun LockCameraButton(modifier: Modifier, onClick: () -> Unit) {
     Box(
-        modifier.height(54.dp).pixelBox(
-            fill = Px.panel,
-            border = Px.line,
-            shadow = 3.dp,
-        ).clickable(onClick = onClick),
+        modifier.height(54.dp)
+            .pixelBox(fill = Px.panel, border = Px.line, shadow = 3.dp)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        PxText(label, 9.sp, Px.cream, fontFamily = PixelFonts.display, maxLines = 1)
+        Canvas(Modifier.size(30.dp)) {
+            val unit = size.minDimension / 24f
+            val stroke = 2.dp.toPx()
+            drawRect(Px.cream, androidx.compose.ui.geometry.Offset(3f * unit, 8f * unit), androidx.compose.ui.geometry.Size(18f * unit, 13f * unit), style = Stroke(stroke))
+            drawRect(Px.cream, androidx.compose.ui.geometry.Offset(8f * unit, 5f * unit), androidx.compose.ui.geometry.Size(8f * unit, 3f * unit))
+            drawRect(Px.cream, androidx.compose.ui.geometry.Offset(10f * unit, 11f * unit), androidx.compose.ui.geometry.Size(8f * unit, 8f * unit), style = Stroke(stroke))
+            drawRect(Px.coral, androidx.compose.ui.geometry.Offset(13f * unit, 14f * unit), androidx.compose.ui.geometry.Size(2f * unit, 2f * unit))
+        }
     }
 }
 

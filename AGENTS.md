@@ -18,7 +18,7 @@ Open these and read the HTML/CSS for exact colors, sizes, spacing and animation 
 | `Lock-passcode-open.html` | Lock screen with passcode pad | Visual reference only; never implement a fake credential pad. Samsung handles secure authentication. |
 
 ## Current state
-Milestones 1-3 are implemented: app launcher, designed and animated Home screen, usage rings and limits, optional music metadata, and device-permission flows. Tapping `LOCK UI` applies the `Lock.html` artwork, then starts the opt-in lock presentation after the user grants overlay access. Do NOT recreate the project. Samsung's KeyguardManager remains responsible for PIN/pattern/password authentication; never implement a fake credential pad.
+Milestones 1-3 are implemented: app launcher, designed and animated Home screen, usage rings and limits, optional music controls, calendar and device-permission flows. Selecting Pixel Launcher as the Home app applies the `Lock.html` artwork once and offers the user-controlled overlay access needed for the lock presentation. Do NOT recreate the project. Samsung's KeyguardManager remains responsible for PIN/pattern/password authentication; never implement a fake credential pad.
 
 ## Stack and setup
 - Kotlin, Jetpack Compose (Material3 only where useful; custom drawing preferred), Gradle Kotlin DSL.
