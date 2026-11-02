@@ -8,9 +8,12 @@ import android.os.BatteryManager
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,11 +39,13 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -62,28 +68,54 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private val TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
 private val DATE_FMT = DateTimeFormatter.ofPattern("EEE dd MMM yyyy", Locale.ENGLISH)
 private val Mint = Color(0xFF6FE39A)
 private val Yellow = Color(0xFFF2D94E)
 
+private fun readBatteryPercent(context: Context): Int {
+    val manager = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+    val property = manager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+    if (property in 0..100) return property
+    val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return 0
+    val level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+    val scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+    return if (level >= 0 && scale > 0) (level * 100 / scale).coerceIn(0, 100) else 0
+}
+
 @Composable
-fun HomeScreen(homeTick: Int) {
+fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
     val ctx = LocalContext.current
     var apps by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
     var menuOpen by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var reload by remember { mutableIntStateOf(0) }
-    val batteryPercent = remember(ctx) {
-        val manager = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).coerceIn(0, 100)
+    var editingApp by remember { mutableStateOf<AppInfo?>(null) }
+    var usageMillis by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    val scope = rememberCoroutineScope()
+    val usageAllowed = remember(resumeTick) { hasUsageAccess(ctx) }
+    val notificationAllowed = remember(resumeTick) { hasNotificationAccess(ctx) }
+    val dailyLimits by remember(ctx) { AppLimitStore.limits(ctx) }.collectAsState(initial = emptyMap())
+    val track by MusicPlayback.track.collectAsState()
+    val batteryPercent by produceState(initialValue = readBatteryPercent(ctx), key1 = ctx) {
+        while (true) {
+            value = readBatteryPercent(ctx)
+            delay(30_000)
+        }
     }
     val railShortcuts = remember(apps) { resolveRailShortcuts(apps) }
+    val usagePackages = remember(railShortcuts) { railShortcuts.mapNotNull { it.app?.pkg }.toSet() }
+    val ringItems = remember(railShortcuts, usageMillis, dailyLimits, batteryPercent, usageAllowed) {
+        buildRingItems(railShortcuts, usageMillis, dailyLimits, batteryPercent, usageAllowed)
+    }
 
     // Reload the app list when something is installed, updated or removed.
     DisposableEffect(Unit) {
@@ -100,11 +132,26 @@ fun HomeScreen(homeTick: Int) {
         onDispose { ctx.unregisterReceiver(receiver) }
     }
     LaunchedEffect(reload) { apps = withContext(Dispatchers.Default) { loadApps(ctx) } }
+    LaunchedEffect(usageAllowed, resumeTick, usagePackages) {
+        if (!usageAllowed) {
+            usageMillis = emptyMap()
+            return@LaunchedEffect
+        }
+        while (isActive) {
+            usageMillis = withContext(Dispatchers.IO) { todayUsageMillis(ctx, usagePackages) }
+            delay(60_000)
+        }
+    }
     LaunchedEffect(homeTick) { menuOpen = false }
     LaunchedEffect(menuOpen) { if (!menuOpen) query = "" }
 
     // On a launcher, Back never leaves home. It only closes the app menu.
-    BackHandler(enabled = true) { menuOpen = false }
+    BackHandler(enabled = true) {
+        when {
+            editingApp != null -> editingApp = null
+            menuOpen -> menuOpen = false
+        }
+    }
 
     val now by produceState(LocalDateTime.now()) {
         while (true) { value = LocalDateTime.now(); delay(1000) }
@@ -127,14 +174,22 @@ fun HomeScreen(homeTick: Int) {
             Modifier.fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(start = 48.dp, top = 48.dp, bottom = 48.dp, end = 200.dp)
-                .blur(if (menuOpen) 8.dp else 0.dp),
+                .blur(if (menuOpen || editingApp != null) 8.dp else 0.dp),
         ) {
             TopBar(batteryPercent)
             Spacer(Modifier.height(16.dp))
 
             Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                 LeftDashboard(now, Modifier.weight(0.42f).fillMaxHeight())
-                RightDashboard(ctx, Modifier.weight(0.58f).fillMaxHeight())
+                RightDashboard(
+                    ctx = ctx,
+                    usageAllowed = usageAllowed,
+                    notificationAllowed = notificationAllowed,
+                    track = track,
+                    onEnableUsage = { openUsageAccessSettings(ctx) },
+                    onEnableNotifications = { openNotificationAccessSettings(ctx) },
+                    modifier = Modifier.weight(0.58f).fillMaxHeight(),
+                )
             }
 
             Spacer(Modifier.height(14.dp))
@@ -142,10 +197,12 @@ fun HomeScreen(homeTick: Int) {
         }
 
         EdgeShortcutRail(
-            shortcuts = railShortcuts,
+            rings = ringItems,
             onLaunch = { launchApp(ctx, it) },
             onMenu = { menuOpen = true },
-            modifier = Modifier.align(Alignment.CenterEnd).blur(if (menuOpen) 8.dp else 0.dp),
+            onEnableUsage = { openUsageAccessSettings(ctx) },
+            onEditLimit = { editingApp = it },
+            modifier = Modifier.align(Alignment.CenterEnd).blur(if (menuOpen || editingApp != null) 8.dp else 0.dp),
         )
 
         // Keep the working Milestone 1 app list and search while the home layout is rebuilt.
@@ -156,6 +213,19 @@ fun HomeScreen(homeTick: Int) {
                 onQuery = { query = it },
                 onClose = { menuOpen = false },
                 onLaunch = { launchApp(ctx, it); menuOpen = false },
+            )
+        }
+
+        editingApp?.let { app ->
+            DailyLimitDialog(
+                app = app,
+                currentLimit = AppLimitStore.getLimit(dailyLimits, app.pkg),
+                usedMillis = usageMillis[app.pkg] ?: 0L,
+                onDismiss = { editingApp = null },
+                onSave = { minutes ->
+                    scope.launch { AppLimitStore.setLimit(ctx, app.pkg, minutes) }
+                    editingApp = null
+                },
             )
         }
     }
@@ -245,7 +315,15 @@ private fun PixelMascot(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun RightDashboard(ctx: Context, modifier: Modifier = Modifier) {
+private fun RightDashboard(
+    ctx: Context,
+    usageAllowed: Boolean,
+    notificationAllowed: Boolean,
+    track: PlayingTrack?,
+    onEnableUsage: () -> Unit,
+    onEnableNotifications: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         WindowPanel(title = "TODAY", modifier = Modifier.weight(1.05f)) {
             AgendaRow("09:00", "Standup")
@@ -256,16 +334,28 @@ private fun RightDashboard(ctx: Context, modifier: Modifier = Modifier) {
 
         Row(Modifier.fillMaxWidth().weight(1.45f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             WindowPanel(title = "NOW.PLAYING", modifier = Modifier.weight(1f)) {
-                Equalizer()
-                PxText("[TRACK TITLE]", 22.sp, Px.cream)
-                PxText("[ARTIST]", 20.sp, Px.dim)
-                Spacer(Modifier.height(4.dp))
-                PxText("|<     >     >|", 22.sp, Px.coral)
+                if (notificationAllowed) {
+                    Equalizer()
+                    PxText(track?.title ?: "NOTHING PLAYING", 22.sp, Px.cream, maxLines = 1)
+                    PxText(track?.artist ?: "MEDIA STATUS", 20.sp, Px.dim, maxLines = 1)
+                    PxText("|<     >     >|", 22.sp, Px.coral)
+                } else {
+                    PxText("OPTIONAL MUSIC ACCESS", 19.sp, Px.cream, maxLines = 1)
+                    PxText("Reads media notification title and artist only.", 17.sp, Px.dim, maxLines = 2)
+                    SettingsActionButton("ENABLE MUSIC ACCESS", onEnableNotifications)
+                }
             }
             WindowPanel(title = "SYS.MONITOR", modifier = Modifier.weight(1f)) {
-                MonitorRow("CPU", 38, Px.coral)
-                MonitorRow("RAM", 61, Px.coral)
-                MonitorRow("STORAGE", 72, Yellow)
+                if (usageAllowed) {
+                    PxText("APP USAGE ACCESS: ON", 17.sp, Mint)
+                    MonitorRow("CPU", 38, Px.coral)
+                    MonitorRow("RAM", 61, Px.coral)
+                    MonitorRow("STORAGE", 72, Yellow)
+                } else {
+                    PxText("DAILY APP LIMITS PAUSED", 18.sp, Px.coral, maxLines = 1)
+                    PxText("Enable Usage Access in Settings to read today's app time.", 17.sp, Px.dim, maxLines = 2)
+                    SettingsActionButton("ENABLE USAGE ACCESS", onEnableUsage)
+                }
             }
         }
 
@@ -327,6 +417,18 @@ private fun SegmentedBar(percent: Int, color: Color, modifier: Modifier = Modifi
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsActionButton(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().height(34.dp)
+            .pixelBox(Px.panel, Px.coral, shadow = 0.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        PxText(label, 9.sp, Px.coral, fontFamily = PixelFonts.display, maxLines = 1)
     }
 }
 
@@ -399,19 +501,54 @@ private fun SearchWindow(appCount: Int, modifier: Modifier = Modifier, onClick: 
 
 private data class RailShortcutSpec(
     val label: String,
-    val percent: Int,
-    val color: Color,
     val matches: List<String>,
 )
 
 private data class RailShortcut(val spec: RailShortcutSpec, val app: AppInfo?)
+private data class RingItem(
+    val label: String,
+    val percent: Int,
+    val color: Color,
+    val app: AppInfo? = null,
+    val battery: Boolean = false,
+    val usageAccess: Boolean = true,
+)
 
 private val RailShortcutSpecs = listOf(
-    RailShortcutSpec("BROWSER", 73, Px.coral, listOf("browser", "chrome", "internet")),
-    RailShortcutSpec("CHAT", 21, Mint, listOf("chat", "message", "whatsapp", "telegram")),
-    RailShortcutSpec("MUSIC", 52, Yellow, listOf("music", "spotify")),
-    RailShortcutSpec("CAMERA", 38, Px.coral, listOf("camera")),
+    RailShortcutSpec("BROWSER", listOf("browser", "chrome", "internet")),
+    RailShortcutSpec("CHAT", listOf("chat", "message", "whatsapp", "telegram")),
+    RailShortcutSpec("MUSIC", listOf("music", "spotify")),
 )
+
+private fun buildRingItems(
+    shortcuts: List<RailShortcut>,
+    usageMillis: Map<String, Long>,
+    limits: Map<String, Int>,
+    batteryPercent: Int,
+    usageAccess: Boolean,
+): List<RingItem> {
+    val appRings = shortcuts.map { shortcut ->
+        val app = shortcut.app
+        val limitMinutes = AppLimitStore.getLimit(limits, app?.pkg)
+        val minutesUsed = app?.pkg?.let { usageMillis[it] ?: 0L } ?: 0L
+        val percent = if (usageAccess && app != null) {
+            ((minutesUsed.toDouble() / 60_000.0) / limitMinutes * 100).roundToInt().coerceIn(0, 100)
+        } else 0
+        val ringColor = when {
+            !usageAccess -> Px.dim
+            percent < 60 -> Mint
+            percent <= 90 -> Yellow
+            else -> Px.coral
+        }
+        RingItem(shortcut.spec.label, percent, ringColor, app, usageAccess = usageAccess)
+    }
+    return appRings + RingItem(
+        label = "BATTERY",
+        percent = batteryPercent.coerceIn(0, 100),
+        color = Px.coral,
+        battery = true,
+    )
+}
 
 private fun resolveRailShortcuts(apps: List<AppInfo>): List<RailShortcut> {
     val used = mutableSetOf<AppInfo>()
@@ -426,9 +563,11 @@ private fun resolveRailShortcuts(apps: List<AppInfo>): List<RailShortcut> {
 
 @Composable
 private fun EdgeShortcutRail(
-    shortcuts: List<RailShortcut>,
+    rings: List<RingItem>,
     onLaunch: (AppInfo) -> Unit,
     onMenu: () -> Unit,
+    onEnableUsage: () -> Unit,
+    onEditLimit: (AppInfo) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -446,10 +585,15 @@ private fun EdgeShortcutRail(
                     verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    shortcuts.forEach { shortcut ->
-                        RailShortcutButton(shortcut) {
-                            shortcut.app?.let(onLaunch)
-                        }
+                    rings.forEach { ring ->
+                        RailShortcutButton(
+                            ring = ring,
+                            onClick = { ring.app?.let(onLaunch) },
+                            onLongClick = {
+                                if (ring.app == null || ring.battery) return@RailShortcutButton
+                                if (ring.usageAccess) onEditLimit(ring.app) else onEnableUsage()
+                            },
+                        )
                     }
                 }
             }
@@ -493,11 +637,11 @@ private fun PixelRailShape(modifier: Modifier = Modifier) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RailShortcutButton(shortcut: RailShortcut, onClick: () -> Unit) {
-    val spec = shortcut.spec
+private fun RailShortcutButton(ring: RingItem, onClick: () -> Unit, onLongClick: () -> Unit) {
     Column(
-        Modifier.width(100.dp).clickable(onClick = onClick),
+        Modifier.width(100.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
@@ -512,15 +656,31 @@ private fun RailShortcutButton(shortcut: RailShortcut, onClick: () -> Unit) {
                     style = Stroke(stroke),
                 )
                 drawArc(
-                    spec.color, -90f, 360f * spec.percent / 100f, false, topLeft, ringSize,
+                    ring.color, -90f, 360f * ring.percent / 100f, false, topLeft, ringSize,
                     style = Stroke(stroke),
                 )
             }
-            shortcut.app?.let { app ->
+            ring.app?.let { app ->
                 Image(app.icon, contentDescription = app.label, modifier = Modifier.size(34.dp))
-            } ?: PxText("?", 26.sp, Px.cream, fontFamily = PixelFonts.display)
+            } ?: if (ring.battery) {
+                BatteryGlyph(Modifier.size(30.dp))
+            } else PxText("?", 26.sp, Px.cream, fontFamily = PixelFonts.display)
         }
-        PxText("${spec.percent}%", 22.sp, Px.cream, align = TextAlign.Center)
+        PxText(if (!ring.usageAccess && !ring.battery) "--" else "${ring.percent}%", 22.sp, Px.cream, align = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun BatteryGlyph(modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val stroke = 3.dp.toPx()
+        val bodyWidth = size.width * 0.72f
+        val bodyHeight = size.height * 0.52f
+        val left = (size.width - bodyWidth) / 2f
+        val top = (size.height - bodyHeight) / 2f
+        drawRect(Px.cream, Offset(left, top), Size(bodyWidth, bodyHeight), style = Stroke(stroke))
+        drawRect(Px.cream, Offset(left + bodyWidth, top + bodyHeight * 0.3f), Size(size.width * 0.12f, bodyHeight * 0.4f))
+        drawRect(Px.coral, Offset(left + stroke, top + stroke), Size(bodyWidth * 0.52f, bodyHeight - stroke * 2))
     }
 }
 
@@ -548,6 +708,73 @@ private fun PixelMenuCircle(onClick: () -> Unit) {
             }
         }
         PxText("MENU", 10.sp, Px.cream, fontFamily = PixelFonts.display)
+    }
+}
+
+@Composable
+private fun DailyLimitDialog(
+    app: AppInfo,
+    currentLimit: Int,
+    usedMillis: Long,
+    onDismiss: () -> Unit,
+    onSave: (Int) -> Unit,
+) {
+    var editedLimit by remember(app.pkg, currentLimit) { mutableIntStateOf(currentLimit) }
+    val outerInteraction = remember { MutableInteractionSource() }
+    val innerInteraction = remember { MutableInteractionSource() }
+    val usedMinutes = (usedMillis / 60_000L).toInt()
+
+    Box(
+        Modifier.fillMaxSize().background(Color(0xCC060403))
+            .clickable(interactionSource = outerInteraction, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier.fillMaxWidth(0.42f)
+                .pixelBox(Color(0xFF120D0B), Px.coral, shadow = 6.dp, borderWidth = 2.dp)
+                .clickable(interactionSource = innerInteraction, indication = null) {}
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            PxText("DAILY APP LIMIT", 14.sp, Px.coral, fontFamily = PixelFonts.display)
+            PxText(app.label.uppercase(Locale.ENGLISH), 28.sp, Px.cream, fontFamily = PixelFonts.body)
+            PxText("USED TODAY: ${usedMinutes / 60}H ${usedMinutes % 60}M", 22.sp, Px.dim)
+            PxText("$editedLimit MIN / DAY", 26.sp, Px.cream, fontFamily = PixelFonts.display)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LimitAdjustButton("- 15", Modifier.weight(1f), onClick = {
+                    editedLimit = (editedLimit - 15).coerceAtLeast(15)
+                })
+                LimitAdjustButton("+ 15", Modifier.weight(1f), onClick = {
+                    editedLimit = (editedLimit + 15).coerceAtMost(24 * 60)
+                })
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LimitAdjustButton("CANCEL", Modifier.weight(1f), onDismiss)
+                LimitAdjustButton("SAVE", Modifier.weight(1f), onClick = { onSave(editedLimit) }, primary = true)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LimitAdjustButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    primary: Boolean = false,
+) {
+    Box(
+        modifier.height(42.dp)
+            .pixelBox(
+                fill = if (primary) Px.coral else Px.panel,
+                border = if (primary) Px.coral else Px.line,
+                shadow = 0.dp,
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        PxText(label, 10.sp, if (primary) Px.bg else Px.cream, fontFamily = PixelFonts.display)
     }
 }
 

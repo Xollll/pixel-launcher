@@ -33,4 +33,5 @@ dependencies {
     implementation("androidx.compose.animation:animation")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.core:core-ktx:1.16.0")
+    implementation("androidx.datastore:datastore-preferences:1.3.0")
 }

@@ -18,5 +18,10 @@ Kotlin + Jetpack Compose home app. Shows a clock, a MENU button and an app menu 
 Press the Home button, pick "Pixel Launcher", choose "Always".
 To go back: Settings > Apps > Choose default apps > Home app > Samsung One UI Home.
 
+## Usage rings and permissions (Milestone 3)
+Usage Access is optional and must be enabled separately on each device. On the home screen, tap **ENABLE USAGE ACCESS**, then select Pixel Launcher in Android's Usage Access settings and allow access. The label and menu location vary by Android version and manufacturer; if Android does not open that page, look under Settings > Apps > Special app access > Usage access. With access enabled, the first three rings show today's usage against each app's daily limit. Long-press a ring to change its limit. Limits are saved locally on that device.
+
+The fourth ring reads the device battery and needs no special permission. Music display is optional: tap **ENABLE MUSIC ACCESS** and allow Pixel Launcher under Notification access. Android may describe this as access to notifications; Pixel Launcher only uses media notification title and artist for the music widget, and does not save notification contents. This permission also needs to be enabled separately on each device.
+
 ## Remove it completely
     adb uninstall com.example.pixellauncher

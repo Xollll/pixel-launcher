@@ -9,11 +9,17 @@ import androidx.compose.runtime.mutableIntStateOf
 class MainActivity : ComponentActivity() {
     // Goes up each time the Home button is pressed while we are already open.
     private val homeTick = mutableIntStateOf(0)
+    private val resumeTick = mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         addOnNewIntentListener { homeTick.intValue++ }
-        setContent { HomeScreen(homeTick.intValue) }
+        setContent { HomeScreen(homeTick.intValue, resumeTick.intValue) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumeTick.intValue++
     }
 }
