@@ -19,7 +19,6 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -34,29 +33,18 @@ import java.util.Locale
 
 private val Context.launcherPreferences by preferencesDataStore(name = "pixel_launcher_settings")
 
-object AppLimitStore {
-    private const val PREFIX = "daily_limit_minutes_"
-    const val DEFAULT_LIMIT_MINUTES = 120
+object RailAppSelectionStore {
+    private val selectionKey = stringPreferencesKey("rail_app_selection_v1")
 
-    fun limits(context: Context): Flow<Map<String, Int>> = context.launcherPreferences.data.map { prefs ->
-        prefs.asMap().entries.mapNotNull { (key, value) ->
-            if (key.name.startsWith(PREFIX)) {
-                val packageName = key.name.removePrefix(PREFIX)
-                val minutes = value as? Int
-                if (packageName.isNotBlank() && minutes != null) packageName to minutes else null
-            } else null
-        }.toMap()
+    fun selection(context: Context): Flow<List<String>?> = context.launcherPreferences.data.map { prefs ->
+        prefs[selectionKey]?.lineSequence()?.filter(String::isNotBlank)?.toList()
     }
 
-    suspend fun setLimit(context: Context, packageName: String, minutes: Int) {
-        if (packageName.isBlank()) return
+    suspend fun save(context: Context, packageNames: List<String>) {
         context.launcherPreferences.edit { prefs ->
-            prefs[intPreferencesKey(PREFIX + packageName)] = minutes.coerceIn(15, 24 * 60)
+            prefs[selectionKey] = packageNames.distinct().take(8).joinToString("\n")
         }
     }
-
-    fun getLimit(limits: Map<String, Int>, packageName: String?): Int =
-        packageName?.let(limits::get) ?: DEFAULT_LIMIT_MINUTES
 }
 
 data class TodoTask(val id: Int, val title: String, val done: Boolean)

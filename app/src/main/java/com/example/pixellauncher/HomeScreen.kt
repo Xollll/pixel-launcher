@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.app.ActivityManager
 import android.media.AudioManager
 import android.os.Environment
@@ -16,8 +17,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -30,12 +35,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -57,6 +60,10 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -65,6 +72,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -72,6 +80,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -114,6 +123,9 @@ private val DATE_FMT = DateTimeFormatter.ofPattern("EEE dd MMM yyyy", Locale.ENG
 private val Mint = Color(0xFF6FE39A)
 private val Yellow = Color(0xFFF2D94E)
 private val PixelSteps = Easing { floor(it * 6f) / 6f }
+private const val RailPageSize = 4
+private const val MaxRailApps = 8
+private const val RailUsageLimitMinutes = 120
 
 @Composable
 private fun rememberCursorAlpha(): Float {
@@ -161,7 +173,7 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
     var returningToMenuFromApp by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var reload by remember { mutableIntStateOf(0) }
-    var editingApp by remember { mutableStateOf<AppInfo?>(null) }
+    var editingRailApps by remember { mutableStateOf(false) }
     var addingTodo by remember { mutableStateOf(false) }
     var usageMillis by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var calendarAllowed by remember(resumeTick) { mutableStateOf(hasCalendarAccess(ctx)) }
@@ -169,7 +181,7 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
     val scope = rememberCoroutineScope()
     val usageAllowed = remember(resumeTick) { hasUsageAccess(ctx) }
     val notificationAllowed = remember(resumeTick) { hasNotificationAccess(ctx) }
-    val dailyLimits by remember(ctx) { AppLimitStore.limits(ctx) }.collectAsState(initial = emptyMap())
+    val savedRailSelection by remember(ctx) { RailAppSelectionStore.selection(ctx) }.collectAsState(initial = null)
     val todos by remember(ctx) { TodoStore.tasks(ctx) }.collectAsState(initial = emptyList())
     val calendarPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         calendarAllowed = granted
@@ -187,10 +199,26 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
             delay(5_000)
         }
     }
-    val railShortcuts = remember(apps) { resolveRailShortcuts(apps) }
+    val newsFeed by produceState(initialValue = NewsFeedState(), key1 = ctx) {
+        while (true) {
+            value = withContext(Dispatchers.IO) { fetchGoogleNews() }
+            delay(30 * 60 * 1000L)
+        }
+    }
+    val defaultRailPackages = remember(apps) {
+        resolveRailShortcuts(apps).take(MaxRailApps).mapNotNull { it.app?.pkg }
+    }
+    val selectedRailPackages = savedRailSelection ?: defaultRailPackages
+    val railShortcuts = remember(apps, selectedRailPackages) {
+        selectedRailPackages.take(MaxRailApps).mapNotNull { packageName ->
+            apps.firstOrNull { it.pkg == packageName }?.let { app ->
+                RailShortcut(RailShortcutSpec(app.label.uppercase(Locale.ENGLISH), app.pkg, emptyList()), app)
+            }
+        }
+    }
     val usagePackages = remember(railShortcuts) { railShortcuts.mapNotNull { it.app?.pkg }.toSet() }
-    val ringItems = remember(railShortcuts, usageMillis, dailyLimits, batteryPercent, usageAllowed) {
-        buildRingItems(railShortcuts, usageMillis, dailyLimits, batteryPercent, usageAllowed)
+    val ringItems = remember(railShortcuts, usageMillis, usageAllowed) {
+        buildRingItems(railShortcuts, usageMillis, usageAllowed)
     }
 
     // Reload the app list when something is installed, updated or removed.
@@ -231,8 +259,8 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
     // On a launcher, Back never leaves home. It only closes the app menu.
     BackHandler(enabled = true) {
         when {
-            editingApp != null -> editingApp = null
             menuOpen -> menuOpen = false
+            editingRailApps -> editingRailApps = false
         }
     }
 
@@ -264,7 +292,7 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
             Modifier.fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(start = 48.dp, top = 48.dp, bottom = 48.dp, end = 168.dp)
-                .blur(if (menuOpen || editingApp != null) 8.dp else 0.dp),
+                .blur(if (menuOpen || editingRailApps) 8.dp else 0.dp),
         ) {
             TopBar(batteryPercent, deviceName)
             Spacer(Modifier.height(16.dp))
@@ -281,12 +309,13 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
                 )
                 RightDashboard(
                     ctx = ctx,
+                    batteryPercent = batteryPercent,
                     systemMetrics = systemMetrics,
+                    newsFeed = newsFeed,
                     notificationAllowed = notificationAllowed,
                     track = track,
                     agenda = agenda,
                     calendarAllowed = calendarAllowed,
-                    onEnableUsage = { openUsageAccessSettings(ctx) },
                     onEnableNotifications = { openNotificationAccessSettings(ctx) },
                     onEnableCalendar = { calendarPermission.launch(android.Manifest.permission.READ_CALENDAR) },
                     modifier = Modifier.weight(0.58f).fillMaxHeight(),
@@ -300,9 +329,8 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
         EdgeShortcutRail(
             rings = ringItems,
             onLaunch = { launchApp(ctx, it) },
-            onEnableUsage = { openUsageAccessSettings(ctx) },
-            onEditLimit = { editingApp = it },
-            modifier = Modifier.align(Alignment.CenterEnd).blur(if (menuOpen || editingApp != null) 8.dp else 0.dp),
+            onManageApps = { editingRailApps = true },
+            modifier = Modifier.align(Alignment.CenterEnd).blur(if (menuOpen || editingRailApps) 8.dp else 0.dp),
         )
 
         // Keep the working Milestone 1 app list and search while the home layout is rebuilt.
@@ -323,15 +351,14 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
             )
         }
 
-        editingApp?.let { app ->
-            DailyLimitDialog(
-                app = app,
-                currentLimit = AppLimitStore.getLimit(dailyLimits, app.pkg),
-                usedMillis = usageMillis[app.pkg] ?: 0L,
-                onDismiss = { editingApp = null },
-                onSave = { minutes ->
-                    scope.launch { AppLimitStore.setLimit(ctx, app.pkg, minutes) }
-                    editingApp = null
+        if (editingRailApps) {
+            RailAppsDialog(
+                apps = apps,
+                selectedPackages = selectedRailPackages,
+                onDismiss = { editingRailApps = false },
+                onSave = { packageNames ->
+                    scope.launch { RailAppSelectionStore.save(ctx, packageNames) }
+                    editingRailApps = false
                 },
             )
         }
@@ -392,6 +419,7 @@ private fun LeftDashboard(
                 )
                 PxText("_", 28.sp, Px.coral, modifier = Modifier.graphicsLayer { alpha = cursorAlpha })
             }
+            Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val clock = now.format(TIME_FMT)
                 PxText(clock.substringBefore(':'), 76.sp, Px.cream, FontWeight.Bold, fontFamily = PixelFonts.display)
@@ -519,18 +547,27 @@ private fun PixelDust(modifier: Modifier = Modifier) {
 @Composable
 private fun RightDashboard(
     ctx: Context,
+    batteryPercent: Int,
     systemMetrics: SystemMetrics,
+    newsFeed: NewsFeedState,
     notificationAllowed: Boolean,
     track: PlayingTrack?,
     agenda: List<AgendaEvent>,
     calendarAllowed: Boolean,
-    onEnableUsage: () -> Unit,
     onEnableNotifications: () -> Unit,
     onEnableCalendar: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var newsSlideIndex by remember { mutableIntStateOf(0) }
+    LaunchedEffect(newsFeed.headlines) {
+        newsSlideIndex = 0
+        while (newsFeed.headlines.size > 1) {
+            delay(8_000)
+            newsSlideIndex = (newsSlideIndex + 1) % newsFeed.headlines.size
+        }
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        WindowPanel(title = "TODAY", modifier = Modifier.weight(1.05f), entranceDelayMs = 180) {
+        WindowPanel(title = "TODAY", modifier = Modifier.weight(0.78f), entranceDelayMs = 180) {
             when {
                 !calendarAllowed -> {
                     PxText("YOUR CALENDAR AGENDA", 21.sp, Px.dim)
@@ -538,11 +575,14 @@ private fun RightDashboard(
                 }
 
                 agenda.isEmpty() -> PxText("NOTHING SCHEDULED TODAY", 22.sp, Px.dim)
-                else -> agenda.forEach { AgendaRow(it.time, it.title) }
+                else -> {
+                    agenda.take(2).forEach { AgendaRow(it.time, it.title) }
+                    if (agenda.size > 2) PxText("+${agenda.size - 2} MORE", 18.sp, Px.dim)
+                }
             }
         }
 
-        Row(Modifier.fillMaxWidth().weight(1.45f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth().weight(1.55f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             WindowPanel(
                 title = "NOW.PLAYING",
                 modifier = Modifier.weight(1f),
@@ -573,17 +613,60 @@ private fun RightDashboard(
                 PxText("LIVE DEVICE MEMORY", 17.sp, Mint)
                 MonitorRow("RAM USED", systemMetrics.ramPercent, Px.coral)
                 MonitorRow("STORAGE USED", systemMetrics.storagePercent, Yellow)
+                MonitorRow(
+                    "BATTERY",
+                    batteryPercent,
+                    when {
+                        batteryPercent <= 20 -> Px.coral
+                        batteryPercent <= 50 -> Yellow
+                        else -> Mint
+                    },
+                )
             }
         }
 
-        WindowPanel(title = "QUICK.TOGGLE", modifier = Modifier.height(92.dp), entranceDelayMs = 630) {
-            Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PanelButton(ctx, "WI-FI", Settings.Panel.ACTION_WIFI, true, Modifier.weight(1f))
-                PanelButton(ctx, "BT", Settings.ACTION_BLUETOOTH_SETTINGS, true, Modifier.weight(1f))
-                PanelButton(ctx, "DND", Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS, false, Modifier.weight(1f))
-                PanelButton(ctx, "ROTATE", Settings.ACTION_DISPLAY_SETTINGS, false, Modifier.weight(1f))
+        WindowPanel(title = "NEWS.FEED", modifier = Modifier.height(184.dp), entranceDelayMs = 630) {
+            when {
+                newsFeed.headlines.isNotEmpty() -> {
+                    val headline = newsFeed.headlines[newsSlideIndex.coerceIn(0, newsFeed.headlines.lastIndex)]
+                    AnimatedContent(
+                        targetState = headline,
+                        modifier = Modifier.fillMaxSize(),
+                        transitionSpec = {
+                            (slideInHorizontally(tween(420)) { it / 3 } + fadeIn(tween(300))) togetherWith
+                                (slideOutHorizontally(tween(420)) { -it / 3 } + fadeOut(tween(260)))
+                        },
+                        label = "news headline slide",
+                    ) { story ->
+                        Column(
+                            Modifier.fillMaxSize().clickable { openNewsHeadline(ctx, story) },
+                            verticalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                PxText("TOP STORY", 9.sp, Px.coral, fontFamily = PixelFonts.display)
+                                Spacer(Modifier.width(8.dp))
+                                PxText("${newsSlideIndex + 1} / ${newsFeed.headlines.size}", 18.sp, Px.dim)
+                            }
+                            PxText(story.title, 29.sp, Px.cream, maxLines = 2)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                PxText("> ${story.source.uppercase(Locale.ENGLISH)}", 19.sp, Px.dim, modifier = Modifier.weight(1f), maxLines = 1)
+                                PxText("OPEN  ↗", 8.sp, Px.coral, fontFamily = PixelFonts.display)
+                            }
+                        }
+                    }
+                }
+                newsFeed.failed -> PxText("NEWS FEED OFFLINE", 20.sp, Px.dim)
+                else -> PxText("LOADING HEADLINES...", 20.sp, Px.dim)
             }
         }
+    }
+}
+
+private fun openNewsHeadline(context: Context, headline: NewsHeadline) {
+    val uri = Uri.parse(headline.url)
+    if (uri.scheme != "https" || uri.host != "news.google.com") return
+    runCatching {
+        context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
 
@@ -831,8 +914,9 @@ private data class RingItem(
     val label: String,
     val percent: Int,
     val color: Color,
-    val app: AppInfo? = null,
-    val battery: Boolean = false,
+    val app: AppInfo,
+    val usedMillis: Long,
+    val limitMinutes: Int,
     val usageAccess: Boolean = true,
 )
 
@@ -845,15 +929,14 @@ private val RailShortcutSpecs = listOf(
 private fun buildRingItems(
     shortcuts: List<RailShortcut>,
     usageMillis: Map<String, Long>,
-    limits: Map<String, Int>,
-    batteryPercent: Int,
     usageAccess: Boolean,
 ): List<RingItem> {
     val appRings = shortcuts.map { shortcut ->
         val app = shortcut.app
-        val limitMinutes = AppLimitStore.getLimit(limits, app?.pkg)
-        val minutesUsed = app?.pkg?.let { usageMillis[it] ?: 0L } ?: 0L
-        val percent = if (usageAccess && app != null) {
+        if (app == null) return@map null
+        val limitMinutes = RailUsageLimitMinutes
+        val minutesUsed = usageMillis[app.pkg] ?: 0L
+        val percent = if (usageAccess) {
             ((minutesUsed.toDouble() / 60_000.0) / limitMinutes * 100).roundToInt().coerceIn(0, 100)
         } else 0
         val ringColor = when {
@@ -862,63 +945,87 @@ private fun buildRingItems(
             percent <= 90 -> Yellow
             else -> Px.coral
         }
-        RingItem(shortcut.spec.label, percent, ringColor, app, usageAccess = usageAccess)
+        RingItem(shortcut.spec.label, percent, ringColor, app, minutesUsed, limitMinutes, usageAccess)
     }
-    return appRings + RingItem(
-        label = "BATTERY",
-        percent = batteryPercent.coerceIn(0, 100),
-        color = Px.coral,
-        battery = true,
-    )
+    return appRings.filterNotNull()
 }
 
 private fun resolveRailShortcuts(apps: List<AppInfo>): List<RailShortcut> {
-    val used = mutableSetOf<AppInfo>()
-    return RailShortcutSpecs.map { spec ->
-        val match = apps.firstOrNull { app -> app !in used && app.pkg == spec.packageName }
+    val usedApps = mutableSetOf<AppInfo>()
+    val preferred = RailShortcutSpecs.mapNotNull { spec ->
+        val match = apps.firstOrNull { app -> app !in usedApps && app.pkg == spec.packageName }
             ?: apps.firstOrNull { app ->
-                app !in used && spec.matches.any { token -> app.label.contains(token, ignoreCase = true) }
+                app !in usedApps && spec.matches.any { token -> app.label.contains(token, ignoreCase = true) }
             }
-        if (match != null) used += match
-        RailShortcut(spec, match)
+        match?.let { usedApps += it; RailShortcut(spec, it) }
     }
+    val usedPackages = preferred.mapNotNull { it.app?.pkg }.toSet()
+    val additional = apps.asSequence().filterNot { it.pkg in usedPackages }
+        .take((MaxRailApps - preferred.size).coerceAtLeast(0))
+        .map { app -> RailShortcut(RailShortcutSpec(app.label.uppercase(Locale.ENGLISH), app.pkg, emptyList()), app) }
+        .toList()
+    return (preferred + additional).take(MaxRailApps)
 }
 
 @Composable
 private fun EdgeShortcutRail(
     rings: List<RingItem>,
     onLaunch: (AppInfo) -> Unit,
-    onEnableUsage: () -> Unit,
-    onEditLimit: (AppInfo) -> Unit,
+    onManageApps: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showingUsagePackage by remember { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+    val currentPage by remember(listState, rings.size) {
+        derivedStateOf { (listState.firstVisibleItemIndex / RailPageSize).coerceAtLeast(0) }
+    }
+    val pageCount = (rings.size + RailPageSize - 1) / RailPageSize
     Box(modifier.width(152.dp).height(500.dp)) {
         PixelRailShape(Modifier.fillMaxSize())
-        Box(
-            Modifier.fillMaxHeight().padding(start = 40.dp, top = 34.dp, bottom = 24.dp),
-            contentAlignment = Alignment.Center,
+        Column(
+            Modifier.fillMaxHeight().width(152.dp).padding(start = 40.dp, top = 34.dp, bottom = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
-                Modifier.fillMaxHeight().width(112.dp),
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                rings.forEach { ring ->
+                itemsIndexed(rings, key = { _, ring -> ring.app.pkg }) { _, ring ->
                     RailShortcutButton(
                         ring = ring,
-                        onClick = { ring.app?.let(onLaunch) },
-                        onLongClick = {
-                            if (ring.app == null || ring.battery) return@RailShortcutButton
-                            if (ring.usageAccess) onEditLimit(ring.app) else onEnableUsage()
+                        showingUsage = showingUsagePackage == ring.app.pkg,
+                        onClick = {
+                            if (showingUsagePackage == ring.app.pkg) {
+                                onLaunch(ring.app)
+                                showingUsagePackage = null
+                            } else {
+                                showingUsagePackage = ring.app.pkg
+                            }
                         },
                     )
                 }
             }
+            if (pageCount > 1) {
+                Row(
+                    Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    repeat(pageCount) { page ->
+                        Box(Modifier.size(7.dp).background(if (page == currentPage) Px.coral else Px.line))
+                    }
+                }
+            }
         }
         Box(
-            Modifier.align(Alignment.TopCenter).padding(top = 13.dp)
-                .width(30.dp).height(5.dp).background(Px.coral),
-        )
+            Modifier.align(Alignment.TopCenter).padding(top = 1.dp).size(width = 52.dp, height = 32.dp)
+                .clickable(onClick = onManageApps),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.width(30.dp).height(5.dp).background(Px.coral))
+        }
     }
 }
 
@@ -952,15 +1059,34 @@ private fun PixelRailShape(modifier: Modifier = Modifier) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RailShortcutButton(ring: RingItem, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun RailShortcutButton(
+    ring: RingItem,
+    showingUsage: Boolean,
+    onClick: () -> Unit,
+) {
+    val warningAlpha = remember(ring.app.pkg) { Animatable(1f) }
+    var warningShown by remember(ring.app.pkg) { mutableStateOf(false) }
+    val overLimit = ring.usageAccess && ring.percent >= 100
+    LaunchedEffect(overLimit) {
+        if (overLimit && !warningShown) {
+            warningShown = true
+            warningAlpha.animateTo(0.05f, tween(160))
+            delay(140)
+            warningAlpha.animateTo(1f, tween(160))
+        } else if (!overLimit) {
+            warningShown = false
+        }
+    }
     Column(
-        Modifier.width(100.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        Modifier.width(100.dp).clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(3.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Box(Modifier.size(70.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(76.dp),
+            contentAlignment = Alignment.Center,
+        ) {
             Canvas(Modifier.fillMaxSize()) {
                 val stroke = 7.dp.toPx()
                 val radius = (size.minDimension - stroke) / 2f
@@ -971,22 +1097,43 @@ private fun RailShortcutButton(ring: RingItem, onClick: () -> Unit, onLongClick:
                     style = Stroke(stroke),
                 )
                 drawArc(
-                    ring.color, -90f, 360f * ring.percent / 100f, false, topLeft, ringSize,
+                    ring.color.copy(alpha = warningAlpha.value), -90f, 360f * ring.percent / 100f, false, topLeft, ringSize,
                     style = Stroke(stroke),
                 )
             }
-            ring.app?.let { app ->
-                Image(app.icon, contentDescription = app.label, modifier = Modifier.size(34.dp))
-            } ?: if (ring.battery) {
-                BatteryGlyph(Modifier.size(30.dp))
-            } else PxText("?", 26.sp, Px.cream, fontFamily = PixelFonts.display)
+            Image(ring.app.icon, contentDescription = ring.app.label, modifier = Modifier.size(38.dp))
         }
-        PxText(
-            if (!ring.usageAccess && !ring.battery) "--" else "${ring.percent}%",
-            20.sp,
-            Px.cream,
-            align = TextAlign.Center
-        )
+        Box(Modifier.fillMaxWidth().height(22.dp), contentAlignment = Alignment.Center) {
+            PxText(
+                when {
+                    !ring.usageAccess && showingUsage -> "NO ACCESS"
+                    showingUsage -> "${formatRailTime(ring.usedMillis)} / ${formatRailLimit(ring.limitMinutes)}"
+                    !ring.usageAccess -> "--"
+                    else -> "${ring.percent}%"
+                },
+                if (showingUsage) 14.sp else 18.sp,
+                Px.cream,
+                align = TextAlign.Center,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+private fun formatRailTime(usedMillis: Long): String {
+    val minutes = (usedMillis / 60_000L).coerceAtLeast(0)
+    val hours = minutes / 60
+    val remainder = minutes % 60
+    return if (hours > 0) "${hours}h ${remainder}m" else "${remainder}m"
+}
+
+private fun formatRailLimit(limitMinutes: Int): String {
+    val hours = limitMinutes / 60
+    val minutes = limitMinutes % 60
+    return when {
+        hours > 0 && minutes > 0 -> "${hours}h ${minutes}m"
+        hours > 0 -> "${hours}h"
+        else -> "${minutes}m"
     }
 }
 
@@ -1009,46 +1156,51 @@ private fun BatteryGlyph(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun DailyLimitDialog(
-    app: AppInfo,
-    currentLimit: Int,
-    usedMillis: Long,
+private fun RailAppsDialog(
+    apps: List<AppInfo>,
+    selectedPackages: List<String>,
     onDismiss: () -> Unit,
-    onSave: (Int) -> Unit,
+    onSave: (List<String>) -> Unit,
 ) {
-    var editedLimit by remember(app.pkg, currentLimit) { mutableIntStateOf(currentLimit) }
-    val outerInteraction = remember { MutableInteractionSource() }
-    val innerInteraction = remember { MutableInteractionSource() }
-    val usedMinutes = (usedMillis / 60_000L).toInt()
-
-    Box(
-        Modifier.fillMaxSize().background(Color(0xCC060403))
-            .clickable(interactionSource = outerInteraction, indication = null, onClick = onDismiss),
-        contentAlignment = Alignment.Center,
-    ) {
+    var selection by remember(apps, selectedPackages) { mutableStateOf(selectedPackages.toList()) }
+    Dialog(onDismissRequest = onDismiss) {
         Column(
-            Modifier.fillMaxWidth(0.42f)
-                .pixelBox(Color(0xFF120D0B), Px.coral, shadow = 6.dp, borderWidth = 2.dp)
-                .clickable(interactionSource = innerInteraction, indication = null) {}
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.fillMaxWidth(0.72f).height(620.dp)
+                .pixelBox(Px.panel, Px.coral, shadow = 6.dp, borderWidth = 2.dp)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            PxText("DAILY APP LIMIT", 14.sp, Px.coral, fontFamily = PixelFonts.display)
-            PxText(app.label.uppercase(Locale.ENGLISH), 28.sp, Px.cream, fontFamily = PixelFonts.body)
-            PxText("USED TODAY: ${usedMinutes / 60}H ${usedMinutes % 60}M", 22.sp, Px.dim)
-            PxText("$editedLimit MIN / DAY", 26.sp, Px.cream, fontFamily = PixelFonts.display)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                LimitAdjustButton("- 15", Modifier.weight(1f), onClick = {
-                    editedLimit = (editedLimit - 15).coerceAtLeast(15)
-                })
-                LimitAdjustButton("+ 15", Modifier.weight(1f), onClick = {
-                    editedLimit = (editedLimit + 15).coerceAtMost(24 * 60)
-                })
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                PxText("EDIT RAIL APPS", 14.sp, Px.coral, fontFamily = PixelFonts.display, modifier = Modifier.weight(1f))
+                PxText("${selection.size}/$MaxRailApps", 19.sp, Px.dim)
+            }
+            PxText("SELECT UP TO $MaxRailApps APPS", 20.sp, Px.dim)
+            LazyColumn(
+                Modifier.fillMaxWidth().weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                items(apps, key = { it.pkg }) { app ->
+                    val selected = app.pkg in selection
+                    Row(
+                        Modifier.fillMaxWidth().height(52.dp)
+                            .pixelBox(if (selected) Color(0xFF20130D) else Color(0xFF0A0807), Px.line, shadow = 0.dp)
+                            .clickable {
+                                selection = if (selected) selection.filterNot { it == app.pkg }
+                                else if (selection.size < MaxRailApps) selection + app.pkg else selection
+                            }
+                            .padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Image(app.icon, contentDescription = null, modifier = Modifier.size(32.dp))
+                        Spacer(Modifier.width(12.dp))
+                        PxText(app.label, 21.sp, Px.cream, modifier = Modifier.weight(1f), maxLines = 1)
+                        PxText(if (selected) "[X]" else "[ ]", 20.sp, if (selected) Px.coral else Px.dim)
+                    }
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 LimitAdjustButton("CANCEL", Modifier.weight(1f), onDismiss)
-                LimitAdjustButton("SAVE", Modifier.weight(1f), onClick = { onSave(editedLimit) }, primary = true)
+                LimitAdjustButton("SAVE", Modifier.weight(1f), onClick = { onSave(selection) }, primary = true)
             }
         }
     }
