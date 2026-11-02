@@ -1272,6 +1272,7 @@ fun AppMenu(
     onClose: () -> Unit,
     onLaunch: (AppInfo) -> Unit,
 ) {
+    val cursorAlpha = rememberCursorAlpha()
     val noRippleOuter = remember { MutableInteractionSource() }
     val noRippleInner = remember { MutableInteractionSource() }
     val shown = remember(apps, query) {
@@ -1318,12 +1319,15 @@ fun AppMenu(
                     onValueChange = onQuery,
                     singleLine = true,
                     textStyle = TextStyle(color = Px.cream, fontSize = 28.sp, fontFamily = PixelFonts.body),
-                    cursorBrush = SolidColor(Px.coral),
+                    cursorBrush = SolidColor(if (query.isEmpty()) Color.Transparent else Px.coral),
                     modifier = Modifier.fillMaxWidth().height(40.dp),
                     decorationBox = { inner ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             PxText("> ", 28.sp, Px.coral)
                             PxText("ls apps/", 28.sp, Px.cream)
+                            if (query.isEmpty()) {
+                                PxText("_", 28.sp, Px.cream, modifier = Modifier.graphicsLayer { alpha = cursorAlpha })
+                            }
                             if (query.isNotEmpty()) Spacer(Modifier.width(8.dp))
                             inner()
                         }
