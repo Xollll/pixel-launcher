@@ -14,11 +14,11 @@ Open these and read the HTML/CSS for exact colors, sizes, spacing and animation 
 |---|---|---|
 | `Home.html` | Home dashboard with the right-edge rail and MENU circle | **Milestone 2 target.** Rebuild the Home screen to match it. |
 | `Home-menu-open.html` | App menu popup, open | **Milestone 2.** Restyle the existing Milestone 1 popup to match it (keep the working app list and search). |
-| `Lock.html` | Lock screen | **Not now.** Reference for a later lock-wallpaper / optional in-app lock. Do not build it in Milestone 2. |
-| `Lock-passcode-open.html` | Lock screen with passcode pad | **Not now.** Same as above. |
+| `Lock.html` | Lock screen | Reference for the lock-screen wallpaper renderer and apply flow. |
+| `Lock-passcode-open.html` | Lock screen with passcode pad | Visual reference only; never implement a fake credential pad. Samsung handles secure authentication. |
 
 ## Current state
-Milestone 1 is already in the repo and builds: working launcher, live clock, MENU button, app menu popup with search (files in `app/src/main/java/com/example/pixellauncher/`: MainActivity.kt, Apps.kt, Theme.kt, HomeScreen.kt). Do NOT recreate the project. Extend it. Next task: Milestone 2 (layout only, no animations yet).
+Milestones 1-3 are implemented: app launcher, designed and animated Home screen, usage rings and limits, optional music metadata, and device-permission flows. Tapping `LOCK UI` applies the `Lock.html` artwork, then starts the opt-in lock presentation after the user grants overlay access. Do NOT recreate the project. Samsung's KeyguardManager remains responsible for PIN/pattern/password authentication; never implement a fake credential pad.
 
 ## Stack and setup
 - Kotlin, Jetpack Compose (Material3 only where useful; custom drawing preferred), Gradle Kotlin DSL.
@@ -75,4 +75,4 @@ Milestone 2 uses placeholder data for rings (73/21/52/38). Real data comes in Mi
 ## Milestone 3 (later, do not start yet)
 - Rings = daily usage vs a per-app limit via `UsageStatsManager`. Needs "Usage access" (guide me to Settings > Usage access). Store limits in DataStore. Color: mint under 60%, yellow 60-90%, coral over. Fourth ring = battery. Long-press a ring to edit its limit.
 - Real clock/date, music widget via notification listener.
-- Lock screen is out of scope: Android does not allow replacing the secure lock screen. Plan is lock wallpaper artwork plus Samsung Good Lock.
+- Do not build a fake passcode screen or claim to replace Android's secure keyguard. The lock presentation uses live system info and requests Samsung's credential UI to unlock. Its foreground service is user-controlled through Display over other apps access.

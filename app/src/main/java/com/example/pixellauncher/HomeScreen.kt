@@ -435,6 +435,9 @@ private fun RightDashboard(
                 PanelButton(ctx, "BT", Settings.ACTION_BLUETOOTH_SETTINGS, true, Modifier.weight(1f))
                 PanelButton(ctx, "DND", Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS, false, Modifier.weight(1f))
                 PanelButton(ctx, "ROTATE", Settings.ACTION_DISPLAY_SETTINGS, false, Modifier.weight(1f))
+                PanelButton(ctx, "LOCK UI", "", false, Modifier.weight(1f)) {
+                    ctx.startActivity(Intent(ctx, LockWallpaperActivity::class.java))
+                }
             }
         }
     }
@@ -515,14 +518,22 @@ private fun SettingsActionButton(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PanelButton(ctx: Context, label: String, action: String, active: Boolean, modifier: Modifier) {
+private fun PanelButton(
+    ctx: Context,
+    label: String,
+    action: String,
+    active: Boolean,
+    modifier: Modifier,
+    onClick: (() -> Unit)? = null,
+) {
     val fill = if (active) Px.coral else Px.panel
     val textColor = if (active) Px.bg else Px.dim
     Box(
         modifier.height(46.dp)
             .pixelBox(fill, if (active) Px.coral else Px.line, shadow = 0.dp)
             .clickable {
-                runCatching { ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                if (onClick != null) onClick()
+                else runCatching { ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             },
         contentAlignment = Alignment.Center,
     ) {

@@ -87,6 +87,17 @@ fun todayUsageMillis(context: Context, packageNames: Set<String>): Map<String, L
 
 data class PlayingTrack(val title: String, val artist: String, val packageName: String)
 
+data class LockAlert(val app: String, val title: String, val detail: String)
+
+object LockNotifications {
+    private val mutableAlerts = MutableStateFlow<List<LockAlert>>(emptyList())
+    val alerts = mutableAlerts.asStateFlow()
+
+    internal fun update(alerts: List<LockAlert>) {
+        mutableAlerts.value = alerts.take(3)
+    }
+}
+
 object MusicPlayback {
     private val mutableTrack = MutableStateFlow<PlayingTrack?>(null)
     val track = mutableTrack.asStateFlow()
@@ -127,14 +138,17 @@ fun openNotificationAccessSettings(context: Context) {
 class MusicNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         refreshActiveMediaNotifications()
+        refreshLockNotifications()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         parseMediaNotification(sbn)?.let(MusicPlayback::update)
+        refreshLockNotifications()
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         refreshActiveMediaNotifications()
+        refreshLockNotifications()
     }
 
     private fun refreshActiveMediaNotifications() {
@@ -142,6 +156,31 @@ class MusicNotificationListener : NotificationListenerService() {
             .mapNotNull(::parseMediaNotification)
             .lastOrNull()
         MusicPlayback.update(current)
+    }
+
+    private fun refreshLockNotifications() {
+        val notifications = runCatching { activeNotifications.orEmpty() }.getOrDefault(emptyArray())
+        LockNotifications.update(notifications.mapNotNull(::parseLockNotification))
+    }
+
+    private fun parseLockNotification(sbn: StatusBarNotification): LockAlert? {
+        if (sbn.packageName == packageName) return null
+        val notification = sbn.notification ?: return null
+        if (notification.visibility == Notification.VISIBILITY_SECRET) return null
+
+        val appLabel = runCatching {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString()
+        }.getOrDefault(sbn.packageName.substringAfterLast('.').uppercase())
+        val displayNotification = if (notification.visibility == Notification.VISIBILITY_PUBLIC) {
+            notification
+        } else {
+            notification.publicVersion ?: return LockAlert(appLabel, "CONTENT HIDDEN", "")
+        }
+        val extras = displayNotification.extras ?: return LockAlert(appLabel, "NEW NOTIFICATION", "")
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
+            .ifBlank { "NEW NOTIFICATION" }
+        val detail = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+        return LockAlert(appLabel, title, detail)
     }
 
     private fun parseMediaNotification(sbn: StatusBarNotification): PlayingTrack? {

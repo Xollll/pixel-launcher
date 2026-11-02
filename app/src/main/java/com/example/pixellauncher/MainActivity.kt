@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
     // Goes up each time the Home button is pressed while we are already open.
@@ -39,5 +40,15 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumeTick.intValue++
+        syncLockPresentationService()
+    }
+
+    private fun syncLockPresentationService() {
+        val service = Intent(this, LockPresentationService::class.java)
+        if (Settings.canDrawOverlays(this)) {
+            runCatching { ContextCompat.startForegroundService(this, service) }
+        } else {
+            stopService(service)
+        }
     }
 }

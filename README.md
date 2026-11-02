@@ -23,5 +23,8 @@ Usage Access is optional and must be enabled separately on each device. On the h
 
 The fourth ring reads the device battery and needs no special permission. Music display is optional: tap **ENABLE MUSIC ACCESS** and allow Pixel Launcher under Notification access. Android may describe this as access to notifications; Pixel Launcher only uses media notification title and artist for the music widget, and does not save notification contents. This permission also needs to be enabled separately on each device.
 
+## Lock screen design
+Tap **LOCK UI** under QUICK.TOGGLE to set the artwork from `design/Lock.html` as the lock-screen wallpaper and enable the interactive presentation. Android will ask for **Display over other apps** access so the presentation can open when the screen wakes; a persistent notification shows that its foreground service is running. It displays live time, date, Wi-Fi and battery, public notification content (private notification content remains hidden), and a camera shortcut. **SWIPE UP TO UNLOCK** invokes Samsung's secure credential UI. The sample keypad in the HTML mockup is intentionally not used. Revoking Display over other apps stops the presentation; Samsung's wallpaper and lock settings can restore the default look.
+
 ## Remove it completely
     adb uninstall com.example.pixellauncher

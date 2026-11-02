@@ -3,6 +3,12 @@
 
     <!-- Usage Access is a user-controlled special app access, not a runtime dialog. -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Lets the launcher see the other installed apps (Android 11+ package visibility). -->
     <queries>
@@ -39,6 +45,18 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".LockWallpaperActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape" />
+
+        <activity
+            android:name=".LockPresentationActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
+
         <service
             android:name=".MusicNotificationListener"
             android:label="Pixel Launcher music display"
@@ -47,6 +65,15 @@
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
+        </service>
+
+        <service
+            android:name=".LockPresentationService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Show the user's lock screen presentation when the display wakes" />
         </service>
     </application>
 </manifest>
