@@ -4,9 +4,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.BatteryManager
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -52,6 +56,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -85,6 +91,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -121,11 +128,18 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
     var query by remember { mutableStateOf("") }
     var reload by remember { mutableIntStateOf(0) }
     var editingApp by remember { mutableStateOf<AppInfo?>(null) }
+    var addingTodo by remember { mutableStateOf(false) }
     var usageMillis by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var calendarAllowed by remember(resumeTick) { mutableStateOf(hasCalendarAccess(ctx)) }
+    var agenda by remember { mutableStateOf<List<AgendaEvent>>(emptyList()) }
     val scope = rememberCoroutineScope()
     val usageAllowed = remember(resumeTick) { hasUsageAccess(ctx) }
     val notificationAllowed = remember(resumeTick) { hasNotificationAccess(ctx) }
     val dailyLimits by remember(ctx) { AppLimitStore.limits(ctx) }.collectAsState(initial = emptyMap())
+    val todos by remember(ctx) { TodoStore.tasks(ctx) }.collectAsState(initial = emptyList())
+    val calendarPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        calendarAllowed = granted
+    }
     val track by MusicPlayback.track.collectAsState()
     val batteryPercent by produceState(initialValue = readBatteryPercent(ctx), key1 = ctx) {
         while (true) {
@@ -178,6 +192,10 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
     val now by produceState(LocalDateTime.now()) {
         while (true) { value = LocalDateTime.now(); delay(1000) }
     }
+    val deviceName = remember(ctx, resumeTick) { readDeviceName(ctx) }
+    LaunchedEffect(calendarAllowed, now.toLocalDate(), resumeTick) {
+        agenda = if (calendarAllowed) withContext(Dispatchers.IO) { todayCalendarEvents(ctx) } else emptyList()
+    }
 
     Box(
         Modifier.fillMaxSize()
@@ -199,18 +217,29 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
                 .padding(start = 48.dp, top = 48.dp, bottom = 48.dp, end = 200.dp)
                 .blur(if (menuOpen || editingApp != null) 8.dp else 0.dp),
         ) {
-            TopBar(batteryPercent)
+            TopBar(batteryPercent, deviceName)
             Spacer(Modifier.height(16.dp))
 
             Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                LeftDashboard(now, Modifier.weight(0.42f).fillMaxHeight())
+                LeftDashboard(
+                    now = now,
+                    deviceName = deviceName,
+                    todos = todos,
+                    onToggleTodo = { id -> scope.launch { TodoStore.toggle(ctx, id) } },
+                    onRemoveTodo = { id -> scope.launch { TodoStore.remove(ctx, id) } },
+                    onAddTodo = { addingTodo = true },
+                    modifier = Modifier.weight(0.42f).fillMaxHeight(),
+                )
                 RightDashboard(
                     ctx = ctx,
                     usageAllowed = usageAllowed,
                     notificationAllowed = notificationAllowed,
                     track = track,
+                    agenda = agenda,
+                    calendarAllowed = calendarAllowed,
                     onEnableUsage = { openUsageAccessSettings(ctx) },
                     onEnableNotifications = { openNotificationAccessSettings(ctx) },
+                    onEnableCalendar = { calendarPermission.launch(android.Manifest.permission.READ_CALENDAR) },
                     modifier = Modifier.weight(0.58f).fillMaxHeight(),
                 )
             }
@@ -255,11 +284,21 @@ fun HomeScreen(homeTick: Int, resumeTick: Int = 0) {
                 },
             )
         }
+
+        if (addingTodo) {
+            TodoTaskDialog(
+                onDismiss = { addingTodo = false },
+                onSave = { title ->
+                    scope.launch { TodoStore.add(ctx, title) }
+                    addingTodo = false
+                },
+            )
+        }
     }
 }
 
 @Composable
-private fun TopBar(batteryPercent: Int) {
+private fun TopBar(batteryPercent: Int, deviceName: String) {
     Row(
         Modifier.fillMaxWidth().height(48.dp).drawBehind {
             val y = size.height - 1.dp.toPx()
@@ -270,7 +309,7 @@ private fun TopBar(batteryPercent: Int) {
     ) {
         PxText("> PIXEL.OS", 15.sp, Px.coral, FontWeight.Bold, fontFamily = PixelFonts.display)
         Spacer(Modifier.width(18.dp))
-        PxText("S7 FE // ONLINE", 24.sp, Px.dim)
+        PxText("${deviceName.uppercase(Locale.ENGLISH)} // ONLINE", 19.sp, Px.dim, maxLines = 1)
         Spacer(Modifier.weight(1f))
         PxText("WIFI OK", 24.sp, Px.dim)
         Spacer(Modifier.width(22.dp))
@@ -281,7 +320,15 @@ private fun TopBar(batteryPercent: Int) {
 }
 
 @Composable
-private fun LeftDashboard(now: LocalDateTime, modifier: Modifier = Modifier) {
+private fun LeftDashboard(
+    now: LocalDateTime,
+    deviceName: String,
+    todos: List<TodoTask>,
+    onToggleTodo: (Int) -> Unit,
+    onRemoveTodo: (Int) -> Unit,
+    onAddTodo: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier) {
         Column {
             PxText("GOOD ${now.format(DateTimeFormatter.ofPattern("a", Locale.ENGLISH)).let { if (it == "AM") "MORNING" else "EVENING" }}", 28.sp, Px.coral)
@@ -293,25 +340,32 @@ private fun LeftDashboard(now: LocalDateTime, modifier: Modifier = Modifier) {
             PixelMascot(Modifier.width(108.dp).fillMaxHeight())
             Spacer(Modifier.width(10.dp))
             WindowPanel(modifier = Modifier.weight(1f).fillMaxHeight(), entranceDelayMs = 100) {
-                PxText("> hello, player one_", 24.sp, Px.cream, maxLines = 2)
+                PxText("> hello, ${deviceName}_", 24.sp, Px.cream, maxLines = 2)
                 Spacer(Modifier.height(4.dp))
-                PxText("3 tasks today", 20.sp, Px.dim)
+                PxText("${todos.count { !it.done }} TASKS LEFT TODAY", 20.sp, Px.dim)
             }
         }
         Spacer(Modifier.height(12.dp))
         WindowPanel(title = "TODO.md", modifier = Modifier.fillMaxWidth().weight(1f), entranceDelayMs = 250) {
-            TodoRow("x", "Build")
-            TodoRow(" ", "Test")
-            TodoRow(" ", "Refactor")
-            TodoRow(" ", "Ship it")
-            TodoRow(" ", "Take a break")
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                if (todos.isEmpty()) PxText("NO TASKS YET", 22.sp, Px.dim)
+                todos.forEach { task -> TodoRow(task, onToggleTodo, onRemoveTodo) }
+            }
+            SettingsActionButton("+ ADD TASK", onAddTodo)
         }
     }
 }
 
 @Composable
-private fun TodoRow(mark: String, label: String) {
-    PxText("[$mark] $label", 22.sp, if (mark == "x") Px.cream else Px.dim)
+private fun TodoRow(task: TodoTask, onToggle: (Int) -> Unit, onRemove: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
+        PxText(if (task.done) "[x]" else "[ ]", 22.sp, if (task.done) Px.coral else Px.dim,
+            modifier = Modifier.clickable { onToggle(task.id) })
+        Spacer(Modifier.width(8.dp))
+        PxText(task.title, 22.sp, if (task.done) Px.dim else Px.cream,
+            modifier = Modifier.weight(1f).clickable { onToggle(task.id) }, maxLines = 1)
+        PxText("×", 24.sp, Px.dim, modifier = Modifier.clickable { onRemove(task.id) })
+    }
 }
 
 @Composable
@@ -390,29 +444,44 @@ private fun RightDashboard(
     usageAllowed: Boolean,
     notificationAllowed: Boolean,
     track: PlayingTrack?,
+    agenda: List<AgendaEvent>,
+    calendarAllowed: Boolean,
     onEnableUsage: () -> Unit,
     onEnableNotifications: () -> Unit,
+    onEnableCalendar: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         WindowPanel(title = "TODAY", modifier = Modifier.weight(1.05f), entranceDelayMs = 180) {
-            AgendaRow("09:00", "Standup")
-            AgendaRow("12:30", "Lunch")
-            AgendaRow("15:00", "Review")
-            AgendaRow("18:00", "Gym")
+            when {
+                !calendarAllowed -> {
+                    PxText("YOUR CALENDAR AGENDA", 21.sp, Px.dim)
+                    SettingsActionButton("ENABLE CALENDAR ACCESS", onEnableCalendar)
+                }
+                agenda.isEmpty() -> PxText("NOTHING SCHEDULED TODAY", 22.sp, Px.dim)
+                else -> agenda.forEach { AgendaRow(it.time, it.title) }
+            }
         }
 
         Row(Modifier.fillMaxWidth().weight(1.45f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            WindowPanel(title = "NOW.PLAYING", modifier = Modifier.weight(1f), entranceDelayMs = 330) {
+            WindowPanel(
+                title = "NOW.PLAYING",
+                modifier = Modifier.weight(1f),
+                entranceDelayMs = 330,
+                onClick = { MusicPlayback.openSpotify(ctx) },
+            ) {
                 if (notificationAllowed) {
-                    Equalizer()
-                    PxText(track?.title ?: "NOTHING PLAYING", 22.sp, Px.cream, maxLines = 1)
-                    PxText(track?.artist ?: "MEDIA STATUS", 20.sp, Px.dim, maxLines = 1)
-                    PxText("|<     >     >|", 22.sp, Px.coral)
+                    Equalizer(isPlaying = track?.isPlaying == true)
+                    PxText(track?.title ?: "SPOTIFY READY", 22.sp, Px.cream, maxLines = 1)
+                    PxText(track?.artist ?: "TAP CARD TO OPEN SPOTIFY", 20.sp, Px.dim, maxLines = 1)
+                    PlaybackControls(
+                        playing = track?.isPlaying == true,
+                        onPlayPause = { if (!MusicPlayback.toggle()) MusicPlayback.openSpotify(ctx) },
+                    )
                 } else {
-                    PxText("OPTIONAL MUSIC ACCESS", 19.sp, Px.cream, maxLines = 1)
-                    PxText("Reads media notification title and artist only.", 17.sp, Px.dim, maxLines = 2)
-                    SettingsActionButton("ENABLE MUSIC ACCESS", onEnableNotifications)
+                    PxText("SPOTIFY CONTROLS", 21.sp, Px.cream, maxLines = 1)
+                    PxText("Tap card to open Spotify.", 19.sp, Px.dim, maxLines = 2)
+                    SettingsActionButton("ENABLE MEDIA ACCESS", onEnableNotifications)
                 }
             }
             WindowPanel(title = "SYS.MONITOR", modifier = Modifier.weight(1f), entranceDelayMs = 480) {
@@ -453,7 +522,26 @@ private fun AgendaRow(time: String, title: String) {
 }
 
 @Composable
-private fun Equalizer() {
+private fun PlaybackControls(playing: Boolean, onPlayPause: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        PlaybackButton("|<", Modifier.weight(1f)) { MusicPlayback.skipPrevious() }
+        PlaybackButton(if (playing) "PAUSE" else "PLAY", Modifier.weight(1.4f), onPlayPause)
+        PlaybackButton(">|", Modifier.weight(1f)) { MusicPlayback.skipNext() }
+    }
+}
+
+@Composable
+private fun PlaybackButton(label: String, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier.height(34.dp).pixelBox(Px.panel, Px.line, shadow = 0.dp).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        PxText(label, 8.sp, Px.coral, fontFamily = PixelFonts.display, maxLines = 1)
+    }
+}
+
+@Composable
+private fun Equalizer(isPlaying: Boolean) {
     val heights = listOf(.38f, .72f, .52f, .94f, .44f, .82f, .31f, .67f, .48f, .9f, .58f, .76f)
     Row(
         Modifier.fillMaxWidth().height(34.dp).padding(bottom = 4.dp),
@@ -467,9 +555,7 @@ private fun Equalizer() {
                 infiniteRepeatable(tween(900, delayMillis = index * 55, easing = LinearEasing), RepeatMode.Reverse),
                 label = "equalizer bar $index",
             )
-            Box(
-                Modifier.weight(1f).fillMaxHeight(height * level).background(Px.coral),
-            )
+            Box(Modifier.weight(1f).fillMaxHeight(if (isPlaying) height * level else 0.14f).background(Px.coral))
         }
     }
 }
@@ -546,6 +632,7 @@ private fun WindowPanel(
     title: String? = null,
     modifier: Modifier = Modifier,
     entranceDelayMs: Int = 0,
+    onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val floatTransition = rememberInfiniteTransition(label = "window float")
@@ -560,7 +647,7 @@ private fun WindowPanel(
         opacity.animateTo(1f, tween(800, easing = FastOutSlowInEasing))
     }
     Column(
-        modifier.graphicsLayer {
+        modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).graphicsLayer {
             translationY = -float * 6.dp.toPx()
             alpha = opacity.value
         }.drawBehind {
@@ -609,6 +696,7 @@ private fun SearchWindow(appCount: Int, modifier: Modifier = Modifier, onClick: 
 
 private data class RailShortcutSpec(
     val label: String,
+    val packageName: String,
     val matches: List<String>,
 )
 
@@ -623,9 +711,9 @@ private data class RingItem(
 )
 
 private val RailShortcutSpecs = listOf(
-    RailShortcutSpec("BROWSER", listOf("browser", "chrome", "internet")),
-    RailShortcutSpec("CHAT", listOf("chat", "message", "whatsapp", "telegram")),
-    RailShortcutSpec("MUSIC", listOf("music", "spotify")),
+    RailShortcutSpec("GOOGLE", "com.google.android.googlequicksearchbox", listOf("google")),
+    RailShortcutSpec("PLAY STORE", "com.android.vending", listOf("play store", "playstore")),
+    RailShortcutSpec("SPOTIFY", "com.spotify.music", listOf("spotify")),
 )
 
 private fun buildRingItems(
@@ -661,9 +749,10 @@ private fun buildRingItems(
 private fun resolveRailShortcuts(apps: List<AppInfo>): List<RailShortcut> {
     val used = mutableSetOf<AppInfo>()
     return RailShortcutSpecs.map { spec ->
-        val match = apps.firstOrNull { app ->
-            app !in used && spec.matches.any { token -> app.label.contains(token, ignoreCase = true) }
-        } ?: apps.firstOrNull { it !in used }
+        val match = apps.firstOrNull { app -> app !in used && app.pkg == spec.packageName }
+            ?: apps.firstOrNull { app ->
+                app !in used && spec.matches.any { token -> app.label.contains(token, ignoreCase = true) }
+            }
         if (match != null) used += match
         RailShortcut(spec, match)
     }
@@ -873,6 +962,40 @@ private fun DailyLimitDialog(
             }
         }
     }
+}
+
+@Composable
+private fun TodoTaskDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var title by remember { mutableStateOf("") }
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().pixelBox(Px.panel, Px.coral, shadow = 6.dp, borderWidth = 2.dp).padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            PxText("ADD TODO", 13.sp, Px.coral, fontFamily = PixelFonts.display)
+            Box(Modifier.fillMaxWidth().height(48.dp).pixelBox(Color(0xFF0A0807), Px.line, shadow = 0.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
+                if (title.isBlank()) PxText("Task name...", 22.sp, Px.dim)
+                BasicTextField(
+                    value = title,
+                    onValueChange = { title = it.take(80) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    textStyle = TextStyle(color = Px.cream, fontSize = 22.sp, fontFamily = PixelFonts.body),
+                    cursorBrush = SolidColor(Px.coral),
+                )
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LimitAdjustButton("CANCEL", Modifier.weight(1f), onDismiss)
+                LimitAdjustButton("ADD", Modifier.weight(1f), onClick = { onSave(title) }, primary = true)
+            }
+        }
+    }
+}
+
+private fun readDeviceName(context: Context): String {
+    val configured = runCatching { Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) }
+        .getOrNull()?.trim()?.takeIf { it.isNotBlank() && !it.equals("Owner", ignoreCase = true) }
+    return configured ?: Build.MODEL.replace('_', ' ').trim().ifBlank { "ANDROID DEVICE" }
 }
 
 @Composable
