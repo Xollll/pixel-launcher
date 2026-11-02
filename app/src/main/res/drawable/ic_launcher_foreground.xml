@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Stepped terminal frame -->
+    <path
+        android:fillColor="#5A3626"
+        android:pathData="M28,20h52v6h6v12h-8v-8H30v8h-8V26h6zM22,40h8v28h-8zM78,44h8v8h-8zM78,60h8v8h-8zM22,68h8v8h48v-8h8v14h-6v6H28v-6h-6z" />
+    <!-- Pixel prompt chevron -->
+    <path
+        android:fillColor="#F4EDE4"
+        android:pathData="M37,37h8v6h6v6h6v8h-6v6h-6v6h-8v-8h6v-6h6v-4h-6v-6h-6z" />
+    <!-- Blinking prompt cursor, shown steady in the app icon -->
+    <path
+        android:fillColor="#E8795A"
+        android:pathData="M60,64h18v8H60z" />
+    <path
+        android:fillColor="#E8795A"
+        android:pathData="M70,38h8v8h-8z" />
+</vector>
